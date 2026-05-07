@@ -8,14 +8,15 @@ It is designed for:
 - Page structure discovery: selectors, initial-state JSON, navigation trees, script URLs, API hints, and structured data.
 - Pagination and detail-page scouting.
 - Crawl plan drafting, validation, and export.
+- Site type detection, field quality scoring, Markdown reports, and recommended schemas.
 - Structured data quality checks such as job record normalization and quality grading.
 
 Crawpapa-Fetch is not a CAPTCHA cracker, account bypass tool, or stealth abuse framework. It is intended for lawful analysis of public pages and authorized data sources.
 
 ## Status
 
-- Current version: `5.3.0`
-- Test baseline: `104 passed, 1 skipped`
+- Current version: `5.4.0`
+- Test baseline: `107 passed, 1 skipped`
 - Primary MCP server: `unified_crawler_server.py`
 - Package name: `crawpapa-fetch`
 - CLI commands:
@@ -89,6 +90,9 @@ Plan and export:
 
 Data quality:
 
+- `detect_site_type`
+- `field_quality_report`
+- `generate_site_report`
 - `normalize_job_records`
 - `save_data`
 - `save_to_db`
@@ -153,6 +157,7 @@ Run a pre-crawl report from the CLI:
 
 ```bash
 crawpapa-fetch analyze https://example.com/products --goal product_list --output-file report.json
+crawpapa-fetch analyze https://example.com/products --goal product_list --report-format markdown --output-file report.md
 crawpapa-fetch diagnose https://example.com/products
 ```
 

@@ -24,10 +24,16 @@ Use it as the first tool when an Agent needs enough context to write crawler cod
 Output highlights:
 
 - `data.summary`: concise readiness and confidence summary.
+- `data.site_profile`: site type, page type, and preferred data source.
+- `data.field_quality`: field-level grades, scores, sample values, and risks.
+- `data.recommended_schema`: field types, dedupe keys, normalization rules, and quality checks.
 - `data.implementation_hints`: mode, selectors, pagination, detail fields, and risk flags.
 - `data.plan`: generated collection plan.
+- `data.markdown_report`: human-readable report for operators.
 - `diagnostics.steps`: step-by-step execution status.
 - `diagnostics.sections`: compact evidence from each lower-level tool.
+
+Set `report_format="markdown"` to return only the Markdown report.
 
 ### `probe_access_strategy`
 
@@ -132,6 +138,22 @@ Checks whether a plan can execute and optionally samples results.
 Exports a reviewed `site_spec` into a separate crawler framework folder.
 
 ## Data Quality
+
+### `detect_site_type`
+
+Infers whether a target looks like ecommerce, jobs, news, directory, or unknown.
+
+It also estimates page type and preferred data source when called with a full analysis report.
+
+### `field_quality_report`
+
+Scores extracted fields using selector risk, non-empty ratio, value plausibility, and domain-specific noise checks.
+
+Use it before production crawler implementation, especially for price, image, description, salary, and location fields.
+
+### `generate_site_report`
+
+Converts an `analyze_site_for_crawl` JSON report into a human-readable Markdown report.
 
 ### `normalize_job_records`
 

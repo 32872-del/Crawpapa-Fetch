@@ -25,6 +25,7 @@ INCLUDE_PATHS = [
     "RELEASE_NOTES_v5.1.md",
     "RELEASE_NOTES_v5.2.md",
     "RELEASE_NOTES_v5.3.md",
+    "RELEASE_NOTES_v5.4.md",
     "pyproject.toml",
     "uv.lock",
     "main.py",

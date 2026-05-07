@@ -1,5 +1,5 @@
 """
-Crawpapa-Fetch v5.3 - Agent-oriented crawler analysis MCP service
+Crawpapa-Fetch v5.4 - Agent-oriented crawler analysis MCP service
 
 v5.0 主链：
 - scout_page -> draft_collection_plan -> validate_collection_plan -> execute_collection_plan
@@ -156,7 +156,7 @@ except ImportError:
 # ============ 配置 ============
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-SERVER_VERSION = "5.3.0"
+SERVER_VERSION = "5.4.0"
 SERVER_PROTOCOL_VERSION = ".".join(SERVER_VERSION.split(".")[:2])
 
 CONFIG = load_config(PROJECT_ROOT, SERVER_VERSION, warn=logger.warning)
@@ -1383,6 +1383,138 @@ def _detail_field_risk_flags(detail_spec: dict[str, str], samples: list[dict[str
             break
     return list(OrderedDict((flag, None) for flag in flags).keys())
 
+def _sample_values_for_quality(samples: list[dict[str, Any]], field: str, limit: int = 5) -> list[str]:
+    values: list[str] = []
+    for sample in samples[:limit]:
+        raw = (sample.get("values") or {}).get(field, "")
+        if isinstance(raw, list):
+            text = " | ".join(str(item) for item in raw if item)
+        else:
+            text = str(raw or "")
+        text = clean_text_for_output(text)
+        if text:
+            values.append(text[:300])
+    return values
+
+def _field_quality_grade(score: float) -> str:
+    if score >= 0.82:
+        return "A"
+    if score >= 0.65:
+        return "B"
+    if score >= 0.45:
+        return "C"
+    return "D"
+
+def _evaluate_field_quality(field: str, selector: str, samples: list[dict[str, Any]],
+                            site_type: str = "", page_type: str = "") -> dict[str, Any]:
+    values = _sample_values_for_quality(samples, field)
+    total = max(1, min(len(samples), 5))
+    non_empty_ratio = min(1.0, len(values) / total)
+    score = 0.3 + non_empty_ratio * 0.45
+    risks: list[str] = []
+    checks: list[str] = []
+    selector_text = selector or ""
+    combined = " ".join(values)
+    lowered = combined.lower()
+
+    if not selector:
+        score -= 0.35
+        risks.append("missing_selector")
+    if len(values) == 0:
+        score -= 0.3
+        risks.append("empty_values")
+
+    if field in {"title", "name"}:
+        if values and all(5 <= len(value) <= 180 for value in values):
+            score += 0.12
+            checks.append("title_length_plausible")
+        if re.search(r"(breadcrumb|nav|menu|recommend|related|similar)", selector_text, re.I):
+            score -= 0.25
+            risks.append("title_selector_may_target_navigation_or_recommendations")
+
+    elif field in {"price", "price_high", "original_price", "salary", "salary_or_benefits"}:
+        numeric_hits = sum(1 for value in values if re.search(r"[$€£¥]|\bUSD\b|\bEUR\b|\bGBP\b|\bRMB\b|\d", value, re.I))
+        if numeric_hits:
+            score += min(0.18, numeric_hits / total * 0.18)
+            checks.append("numeric_or_currency_signal")
+        if re.search(r"(subtotal|installment|payment|klarna|afterpay|coupon|shipping|delivery|savings)", lowered, re.I):
+            score -= 0.22
+            risks.append("price_value_may_include_payment_shipping_or_promo_noise")
+        if re.search(r"(buybox|payment|subtotal|coupon|saving|installment)", selector_text, re.I):
+            score -= 0.22
+            risks.append("price_selector_may_include_buybox_or_promo_text")
+
+    elif field in {"image", "image_src", "img", "photo"}:
+        url_hits = sum(1 for value in values if re.search(r"https?://|/[^ ]+\.(?:jpg|jpeg|png|webp|gif)", value, re.I))
+        if url_hits:
+            score += min(0.18, url_hits / total * 0.18)
+            checks.append("image_url_signal")
+        if re.search(r"(recommend|related|sponsored|ad|banner|logo|avatar|sprite|icon)", selector_text, re.I):
+            score -= 0.3
+            risks.append("image_selector_may_include_non_primary_images")
+
+    elif field in {"body", "description", "job_description", "requirements"}:
+        if values and sum(len(value) for value in values) / len(values) >= 80:
+            score += 0.12
+            checks.append("description_length_plausible")
+        if re.search(r"(recommend|related|review|customer|also bought|similar|variant|swatch)", selector_text + " " + lowered, re.I):
+            score -= 0.22
+            risks.append("description_may_include_related_variant_or_review_noise")
+
+    elif field in {"location", "job_location"}:
+        if values and any(re.search(r"\b(remote|hybrid|onsite|市|省|州|区|县|city|state)\b", value, re.I) for value in values):
+            score += 0.1
+            checks.append("location_signal")
+        if re.search(r"(footer|header|company|office)", selector_text, re.I):
+            score -= 0.18
+            risks.append("location_selector_may_target_company_or_layout_text")
+
+    if site_type == "ecommerce" and field in {"price", "image_src", "body"}:
+        checks.append("ecommerce_field_review")
+    if site_type == "jobs" and field in {"salary", "salary_or_benefits", "location"}:
+        checks.append("job_field_review")
+
+    score = max(0.0, min(1.0, score))
+    return {
+        "field": field,
+        "selector": selector,
+        "score": round(score, 3),
+        "grade": _field_quality_grade(score),
+        "non_empty_ratio": round(non_empty_ratio, 3),
+        "sample_values": values[:3],
+        "risks": list(OrderedDict((risk, None) for risk in risks).keys()),
+        "checks": list(OrderedDict((check, None) for check in checks).keys()),
+    }
+
+def _field_quality_report_from_samples(detail_spec: dict[str, str], samples: list[dict[str, Any]],
+                                       site_type: str = "", page_type: str = "") -> dict[str, Any]:
+    fields = []
+    for field, selector in (detail_spec or {}).items():
+        fields.append(_evaluate_field_quality(field, selector, samples, site_type=site_type, page_type=page_type))
+    if not fields:
+        return {
+            "overall_score": 0.0,
+            "overall_grade": "D",
+            "fields": [],
+            "risk_flags": ["no_fields_to_evaluate"],
+            "recommendation": "Define target fields or run detail sampling before crawler implementation.",
+        }
+    overall = sum(item["score"] for item in fields) / len(fields)
+    risk_flags = []
+    for item in fields:
+        risk_flags.extend(item.get("risks", []))
+    return {
+        "overall_score": round(overall, 3),
+        "overall_grade": _field_quality_grade(overall),
+        "fields": fields,
+        "risk_flags": list(OrderedDict((risk, None) for risk in risk_flags).keys()),
+        "recommendation": (
+            "Field quality is ready for implementation with normal spot checks."
+            if overall >= 0.75 and not risk_flags else
+            "Review field selectors before production crawling; some fields may contain noise or missing values."
+        ),
+    }
+
 def _classify_access_result(html: str = "", error: str = "", status: int | None = None) -> dict[str, Any]:
     visible_text = ""
     if html:
@@ -2374,6 +2506,236 @@ def _build_site_analysis_recommendations(report: dict[str, Any]) -> list[dict[st
             "confidence": 0.8,
         })
     return recommendations[:20]
+
+def _score_site_type_from_text(text: str, url: str = "", fields: list[str] | None = None) -> dict[str, Any]:
+    lowered = f"{url} {text}".lower()
+    fields = fields or []
+    signals = {
+        "ecommerce": [
+            "product", "cart", "add to cart", "price", "sku", "checkout", "shop", "category",
+            "variant", "size", "color", "shipping", "buy now", "wishlist",
+        ],
+        "jobs": [
+            "job", "career", "vacancy", "salary", "benefit", "remote", "hybrid", "apply",
+            "requirements", "responsibilities", "recruit", "position",
+        ],
+        "news": [
+            "article", "author", "published", "headline", "news", "story", "editor",
+            "subscribe", "breaking",
+        ],
+        "directory": [
+            "listing", "directory", "location", "address", "phone", "hours", "map",
+            "service center", "store locator",
+        ],
+    }
+    scores: dict[str, float] = {}
+    evidence: dict[str, list[str]] = {}
+    for site_type, words in signals.items():
+        hits = []
+        for word in words:
+            if word in lowered:
+                hits.append(word)
+        scores[site_type] = min(1.0, len(hits) / 5)
+        evidence[site_type] = hits[:8]
+    field_text = " ".join(fields).lower()
+    if any(item in field_text for item in ["price", "image", "sku", "color"]):
+        scores["ecommerce"] = min(1.0, scores.get("ecommerce", 0) + 0.25)
+        evidence["ecommerce"].append("requested_product_fields")
+    if any(item in field_text for item in ["salary", "location", "job", "requirements"]):
+        scores["jobs"] = min(1.0, scores.get("jobs", 0) + 0.25)
+        evidence["jobs"].append("requested_job_fields")
+    best_type = max(scores, key=scores.get) if scores else "unknown"
+    confidence = scores.get(best_type, 0)
+    if confidence < 0.2:
+        best_type = "unknown"
+    return {
+        "site_type": best_type,
+        "confidence": round(confidence, 3),
+        "scores": {key: round(value, 3) for key, value in scores.items()},
+        "evidence": {key: value for key, value in evidence.items() if value},
+    }
+
+def _detect_page_type(report: dict[str, Any], site_type: str) -> dict[str, Any]:
+    summary = report.get("summary", {})
+    scout = report.get("scout", {})
+    detail = report.get("detail_samples", {})
+    page_type = "unknown"
+    confidence = 0.3
+    evidence = []
+    if summary.get("detail_links_found", 0) >= 2 or summary.get("list_selector"):
+        page_type = "list"
+        confidence = 0.78
+        evidence.append("detail_links_or_list_selector_found")
+    if detail.get("sampled_detail_count", 0) == 0 and scout.get("field_candidates"):
+        page_type = "detail_or_content"
+        confidence = max(confidence, 0.55)
+        evidence.append("field_candidates_without_detail_samples")
+    if summary.get("pagination_type"):
+        page_type = "paginated_list"
+        confidence = max(confidence, 0.84)
+        evidence.append("pagination_detected")
+    if site_type == "jobs" and page_type == "list":
+        page_type = "job_list"
+    elif site_type == "ecommerce" and page_type in {"list", "paginated_list"}:
+        page_type = "product_list" if page_type == "list" else "paginated_product_list"
+    return {"page_type": page_type, "confidence": round(confidence, 3), "evidence": evidence}
+
+def _detect_data_source_preference(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary", {})
+    best_mode = summary.get("best_mode") or ""
+    if summary.get("network_candidate_count", 0) > 0 or summary.get("api_hint_count", 0) > 0:
+        return {
+            "preferred_source": "public_api_or_initial_state",
+            "confidence": 0.78,
+            "reason": "API hints or browser network candidates were found.",
+        }
+    if best_mode == "browser":
+        return {
+            "preferred_source": "browser_dom",
+            "confidence": 0.74,
+            "reason": "Browser mode is the best access strategy.",
+        }
+    if summary.get("list_selector"):
+        return {
+            "preferred_source": "static_dom",
+            "confidence": 0.72,
+            "reason": "List selector and detail samples are available from fetched HTML.",
+        }
+    return {
+        "preferred_source": "manual_review",
+        "confidence": 0.45,
+        "reason": "No strong API, network, or DOM extraction signal was found.",
+    }
+
+def _infer_site_profile(report: dict[str, Any]) -> dict[str, Any]:
+    fields = report.get("fields_requested") or []
+    scout = report.get("scout", {})
+    detail = report.get("detail_samples", {})
+    text_parts = [
+        report.get("goal", ""),
+        json.dumps(scout.get("api_hints", {}), ensure_ascii=False),
+        json.dumps(scout.get("field_candidates", {}), ensure_ascii=False),
+        json.dumps(detail.get("samples", [])[:2], ensure_ascii=False),
+    ]
+    site_type = _score_site_type_from_text(" ".join(text_parts), report.get("url", ""), fields)
+    page_type = _detect_page_type(report, site_type["site_type"])
+    data_source = _detect_data_source_preference(report)
+    return {
+        **site_type,
+        **page_type,
+        "data_source_preference": data_source,
+    }
+
+def _recommended_schema_from_report(report: dict[str, Any], field_quality: dict[str, Any]) -> dict[str, Any]:
+    site_profile = report.get("site_profile", {})
+    site_type = site_profile.get("site_type", "unknown")
+    plan_fields = (report.get("plan", {}).get("plan") or {}).get("fields", {})
+    quality_by_field = {item["field"]: item for item in field_quality.get("fields", [])}
+    columns: dict[str, dict[str, Any]] = {}
+    for field in plan_fields:
+        q = quality_by_field.get(field, {})
+        field_type = "string"
+        if field in {"price", "price_high", "original_price", "salary_min", "salary_max"}:
+            field_type = "number|string"
+        elif field in {"image", "image_src", "url"}:
+            field_type = "url"
+        elif field in {"body", "description", "requirements", "job_description"}:
+            field_type = "text"
+        columns[field] = {
+            "type": field_type,
+            "required": field in {"title", "name"},
+            "quality_grade": q.get("grade", "D"),
+            "quality_score": q.get("score", 0),
+            "risks": q.get("risks", []),
+        }
+    if site_type == "ecommerce":
+        dedupe_keys = ["url", "title"]
+        normalization_rules = ["parse_price_to_number", "canonicalize_image_url", "strip_variant_noise"]
+    elif site_type == "jobs":
+        dedupe_keys = ["url", "title", "location"]
+        normalization_rules = ["normalize_location", "split_salary_range", "clean_description"]
+    else:
+        dedupe_keys = ["url", "title"]
+        normalization_rules = ["trim_text", "canonicalize_url"]
+    return {
+        "site_type": site_type,
+        "columns": columns,
+        "dedupe_keys": dedupe_keys,
+        "normalization_rules": normalization_rules,
+        "quality_checks": [
+            "required_fields_non_empty",
+            "duplicate_key_rate",
+            "field_noise_review_for_C_or_D_grades",
+        ],
+    }
+
+def _markdown_table_row(values: list[Any]) -> str:
+    return "| " + " | ".join(str(value).replace("\n", " ") for value in values) + " |"
+
+def _generate_site_markdown_report(report: dict[str, Any]) -> str:
+    summary = report.get("summary", {})
+    profile = report.get("site_profile", {})
+    field_quality = report.get("field_quality", {})
+    schema = report.get("recommended_schema", {})
+    hints = report.get("implementation_hints", {})
+    lines = [
+        "# Crawpapa-Fetch Site Analysis Report",
+        "",
+        f"- URL: {report.get('url', '')}",
+        f"- Status: {summary.get('status', 'unknown')}",
+        f"- Best mode: {summary.get('best_mode', '')}",
+        f"- Site type: {profile.get('site_type', 'unknown')} ({profile.get('confidence', 0)})",
+        f"- Page type: {profile.get('page_type', 'unknown')} ({profile.get('confidence', 0)})",
+        f"- Data source: {(profile.get('data_source_preference') or {}).get('preferred_source', 'unknown')}",
+        "",
+        "## Extraction",
+        "",
+        f"- List selector: {summary.get('list_selector', '')}",
+        f"- Pagination: {summary.get('pagination_type', '')}",
+        f"- Detail links found: {summary.get('detail_links_found', 0)}",
+        f"- Detail samples: {summary.get('sampled_detail_count', 0)}",
+        f"- Detail risk flags: {', '.join(summary.get('detail_risk_flags', [])) or 'none'}",
+        "",
+        "## Field Quality",
+        "",
+        _markdown_table_row(["Field", "Grade", "Score", "Selector", "Risks"]),
+        _markdown_table_row(["---", "---", "---", "---", "---"]),
+    ]
+    for item in field_quality.get("fields", []):
+        lines.append(_markdown_table_row([
+            item.get("field", ""),
+            item.get("grade", ""),
+            item.get("score", ""),
+            item.get("selector", ""),
+            ", ".join(item.get("risks", [])) or "none",
+        ]))
+    lines.extend([
+        "",
+        "## Implementation Hints",
+        "",
+        f"- Mode: {hints.get('mode', '')}",
+        f"- Detail fields: `{json.dumps(hints.get('detail_fields', {}), ensure_ascii=False)}`",
+        f"- Sample next URLs: {', '.join(hints.get('sample_next_urls', [])[:3]) or 'none'}",
+        "",
+        "## Recommended Schema",
+        "",
+        f"- Dedupe keys: {', '.join(schema.get('dedupe_keys', []))}",
+        f"- Normalization rules: {', '.join(schema.get('normalization_rules', []))}",
+        f"- Quality checks: {', '.join(schema.get('quality_checks', []))}",
+        "",
+        "## Step Status",
+        "",
+        _markdown_table_row(["Step", "OK", "Duration ms", "Note"]),
+        _markdown_table_row(["---", "---", "---", "---"]),
+    ])
+    for step in report.get("steps", []):
+        lines.append(_markdown_table_row([
+            step.get("name", ""),
+            step.get("ok", False),
+            step.get("duration_ms", ""),
+            step.get("reason") or step.get("error") or "",
+        ]))
+    return "\n".join(lines) + "\n"
 
 def _json_or_lines(value: str) -> list:
     if not value:
@@ -6524,6 +6886,7 @@ def analyze_site_for_crawl(url: str,
                            max_items: int = 20,
                            output: str = "json",
                            output_format: str = "records",
+                           report_format: str = "json",
                            use_cache: bool = False,
                            include_browser: bool = True,
                            observe_network_flag: bool = True,
@@ -6729,6 +7092,16 @@ def analyze_site_for_crawl(url: str,
         report["validation"] = payload
 
         report["summary"] = _build_site_analysis_summary(report)
+        report["site_profile"] = _infer_site_profile(report)
+        detail_spec_for_quality = plan_obj.get("fields", {})
+        detail_samples_for_quality = report.get("detail_samples", {}).get("samples", [])
+        report["field_quality"] = _field_quality_report_from_samples(
+            detail_spec_for_quality,
+            detail_samples_for_quality,
+            site_type=report["site_profile"].get("site_type", ""),
+            page_type=report["site_profile"].get("page_type", ""),
+        )
+        report["recommended_schema"] = _recommended_schema_from_report(report, report["field_quality"])
         report["implementation_hints"] = {
             "mode": report["summary"].get("best_mode") or plan_obj.get("mode"),
             "list_selector": report["summary"].get("list_selector"),
@@ -6736,15 +7109,26 @@ def analyze_site_for_crawl(url: str,
             "pagination": report["pagination"].get("recommended", {}),
             "sample_next_urls": report["summary"].get("sample_next_urls", []),
             "risk_flags": report["summary"].get("detail_risk_flags", []),
+            "site_type": report["site_profile"].get("site_type"),
+            "page_type": report["site_profile"].get("page_type"),
+            "field_quality_grade": report["field_quality"].get("overall_grade"),
         }
         recommendations = _build_site_analysis_recommendations(report)
+        markdown_report = _generate_site_markdown_report(report)
+        report["markdown_report"] = markdown_report
+        if (report_format or "").lower() in {"markdown", "md"}:
+            return markdown_report
         return _success_result(_v5_envelope(
             bool(report["summary"].get("access_ok")) and bool(report["summary"].get("plan_ok")),
             data={
                 "summary": report["summary"],
+                "site_profile": report["site_profile"],
+                "field_quality": report["field_quality"],
+                "recommended_schema": report["recommended_schema"],
                 "implementation_hints": report["implementation_hints"],
                 "plan": plan_obj,
                 "validation": report.get("validation"),
+                "markdown_report": markdown_report,
             },
             diagnostics={"steps": report["steps"], "sections": {
                 "access": report.get("access"),
@@ -6771,6 +7155,112 @@ def analyze_site_for_crawl(url: str,
             type="site_analysis_failed",
             message=str(e),
         ))
+
+@mcp.tool()
+def detect_site_type(analysis_json: str = "", html: str = "", url: str = "",
+                     goal: str = "", fields: str = "") -> str:
+    """
+    Infer site/page type and preferred data source from an existing analysis JSON
+    report or from raw HTML/text hints.
+    """
+    try:
+        if analysis_json:
+            report = _json_obj(analysis_json, {})
+            if report.get("data") and isinstance(report["data"], dict):
+                report = {**report, **report["data"]}
+            profile = _infer_site_profile(report)
+        else:
+            requested_fields = [item.strip() for item in fields.split(",") if item.strip()]
+            type_score = _score_site_type_from_text(f"{goal} {BeautifulSoup(html or '', 'html.parser').get_text(' ', strip=True)[:20000]}", url, requested_fields)
+            profile = {
+                **type_score,
+                "page_type": "unknown",
+                "data_source_preference": {
+                    "preferred_source": "manual_review",
+                    "confidence": 0.45,
+                    "reason": "Only raw hints were provided; run analyze_site_for_crawl for stronger page-type detection.",
+                },
+            }
+        return _success_result(_v5_envelope(
+            profile.get("site_type") != "unknown",
+            data=profile,
+            diagnostics={},
+            recommendations=[{
+                "type": "site_type_review",
+                "reason": "Use this classification to choose target fields, schema, and crawler strategy.",
+                "confidence": profile.get("confidence", 0),
+            }],
+            **profile,
+        ))
+    except Exception as e:
+        return _error_result(str(e), "site_type_detection_failed")
+
+@mcp.tool()
+def field_quality_report(detail_spec: str = "", samples: str = "",
+                         site_type: str = "", page_type: str = "") -> str:
+    """
+    Score extracted fields for emptiness, selector risk, value plausibility, and
+    likely noise. Accepts detail_spec JSON and samples JSON from analyze_detail_samples
+    or analyze_site_for_crawl.
+    """
+    try:
+        spec = _json_obj(detail_spec, {})
+        if samples:
+            loaded_samples = json.loads(samples)
+            if isinstance(loaded_samples, dict) and isinstance(loaded_samples.get("samples"), list):
+                parsed_samples = loaded_samples["samples"]
+            elif isinstance(loaded_samples, list):
+                parsed_samples = loaded_samples
+            elif isinstance(loaded_samples, dict):
+                parsed_samples = [loaded_samples]
+            else:
+                parsed_samples = []
+        else:
+            parsed_samples = []
+        report = _field_quality_report_from_samples(spec, parsed_samples, site_type=site_type, page_type=page_type)
+        return _success_result(_v5_envelope(
+            report.get("overall_score", 0) >= 0.65,
+            data=report,
+            diagnostics={},
+            recommendations=[{
+                "type": "field_quality_review",
+                "reason": report.get("recommendation"),
+                "confidence": report.get("overall_score", 0),
+            }],
+            **report,
+        ))
+    except Exception as e:
+        return _error_result(str(e), "field_quality_report_failed")
+
+@mcp.tool()
+def generate_site_report(analysis_json: str, output_format: str = "markdown") -> str:
+    """
+    Convert an analyze_site_for_crawl JSON report into a human-readable report.
+    Currently supports markdown output.
+    """
+    try:
+        report = _json_obj(analysis_json, {})
+        if report.get("data") and isinstance(report["data"], dict):
+            merged = {**report, **report["data"]}
+            if "steps" not in merged and isinstance(report.get("diagnostics"), dict):
+                merged["steps"] = report["diagnostics"].get("steps", [])
+            report = merged
+        if "summary" not in report:
+            report["summary"] = _build_site_analysis_summary(report)
+        if "site_profile" not in report:
+            report["site_profile"] = _infer_site_profile(report)
+        if "field_quality" not in report:
+            plan_fields = (report.get("plan") or {}).get("fields", {})
+            samples = (report.get("detail_samples") or {}).get("samples", [])
+            report["field_quality"] = _field_quality_report_from_samples(plan_fields, samples)
+        if "recommended_schema" not in report:
+            report["recommended_schema"] = _recommended_schema_from_report(report, report["field_quality"])
+        markdown = _generate_site_markdown_report(report)
+        if (output_format or "").lower() in {"markdown", "md"}:
+            return markdown
+        return _success_result(_v5_envelope(True, data={"markdown_report": markdown}, diagnostics={}, recommendations=[]))
+    except Exception as e:
+        return _error_result(str(e), "site_report_generation_failed")
 
 @mcp.tool()
 def infer_site_selectors(url: str, target_fields: str = "list_link,title,price,image_src,body",

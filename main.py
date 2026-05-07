@@ -53,6 +53,7 @@ def main() -> int:
     analyze_parser.add_argument("--max-pages", type=int, default=3)
     analyze_parser.add_argument("--max-items", type=int, default=20)
     analyze_parser.add_argument("--output-file", default="")
+    analyze_parser.add_argument("--report-format", choices=["json", "markdown"], default="json")
     analyze_parser.add_argument("--no-browser", action="store_true")
     analyze_parser.add_argument("--no-network", action="store_true")
     analyze_parser.add_argument("--allow-private", action="store_true")
@@ -99,6 +100,7 @@ def main() -> int:
             sample_size=args.sample_size,
             max_pages=args.max_pages,
             max_items=args.max_items,
+            report_format=args.report_format,
             include_browser=not args.no_browser,
             observe_network_flag=not args.no_network,
             respect_robots=not args.ignore_robots,

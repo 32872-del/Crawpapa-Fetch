@@ -807,10 +807,70 @@ def test_analyze_site_for_crawl_builds_unified_report():
     assert result["summary"]["best_mode"] == "requests"
     assert result["summary"]["list_selector"]
     assert result["summary"]["sampled_detail_count"] == 2
+    assert result["site_profile"]["site_type"] == "ecommerce"
+    assert result["field_quality"]["overall_grade"] in {"A", "B"}
+    assert result["recommended_schema"]["dedupe_keys"]
+    assert "# Crawpapa-Fetch Site Analysis Report" in result["markdown_report"]
     assert result["implementation_hints"]["detail_fields"]["title"].startswith("h1.")
+    assert result["implementation_hints"]["field_quality_grade"] in {"A", "B"}
     assert result["validation"]["ok"] is True
     assert any(step["name"] == "analyze_detail_samples" and step["ok"] for step in result["steps"])
     assert any(item.get("type") == "implementation_mode" for item in result["recommendations"])
+
+
+def test_field_quality_report_scores_detail_samples():
+    detail_spec = {
+        "title": "h1.product-title",
+        "price": "span.price",
+        "image_src": "img.main-image@src",
+        "body": "div.product-description",
+    }
+    samples = [
+        {"values": {
+            "title": "Detail Product A",
+            "price": "$19.99",
+            "image_src": "/images/a.jpg",
+            "body": "A useful product description with enough detail for review.",
+        }},
+        {"values": {
+            "title": "Detail Product B",
+            "price": "$29.99",
+            "image_src": "/images/b.jpg",
+            "body": "Another useful product description with enough detail for review.",
+        }},
+    ]
+
+    result = json.loads(server.field_quality_report(
+        detail_spec=json.dumps(detail_spec),
+        samples=json.dumps(samples),
+        site_type="ecommerce",
+        page_type="product_list",
+    ))
+
+    assert result["ok"] is True
+    assert result["overall_grade"] in {"A", "B"}
+    assert any(item["field"] == "price" for item in result["fields"])
+
+
+def test_detect_site_type_and_generate_markdown_report():
+    analysis = {
+        "url": "https://example.com/jobs",
+        "goal": "agent development jobs with salary and location",
+        "fields_requested": ["title", "salary", "location", "requirements"],
+        "summary": {"status": "needs_review", "best_mode": "requests", "list_selector": "a.job@href"},
+        "scout": {"api_hints": {}, "field_candidates": {"salary": [{"selector": ".salary"}]}},
+        "detail_samples": {"samples": [{"values": {"title": "Agent Developer", "salary": "$100k", "location": "Remote"}}]},
+        "plan": {"plan": {"fields": {"title": "h1", "salary": ".salary", "location": ".location"}}},
+        "steps": [{"name": "probe_access_strategy", "ok": True, "duration_ms": 1}],
+    }
+
+    detected = json.loads(server.detect_site_type(analysis_json=json.dumps(analysis)))
+    assert detected["site_type"] == "jobs"
+
+    report = server.generate_site_report(json.dumps(analysis))
+    assert "# Crawpapa-Fetch Site Analysis Report" in report
+    assert "Agent Developer" not in report
+    assert "Recommended Schema" in report
 
 
 def test_infer_site_selectors_returns_ranked_candidates():
