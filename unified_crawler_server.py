@@ -6151,7 +6151,19 @@ def observe_browser_network(url: str, wait_selector: str = "",
             **_v5_compat(result),
         ))
     except Exception as e:
-        return _error_result(str(e), "network_observe_failed")
+        return _success_result(_v5_envelope(
+            False,
+            data={"url": url},
+            diagnostics={"error": str(e), "type": "network_observe_failed"},
+            recommendations=[{
+                "type": "browser_runtime_check",
+                "reason": "浏览器网络观测失败。请确认 Playwright 及浏览器引擎已安装，例如执行 python -m playwright install chromium。",
+                "confidence": 0.86,
+            }],
+            error=True,
+            type="network_observe_failed",
+            message=str(e),
+        ))
 
 @mcp.tool()
 def infer_pagination_strategy(url: str, mode: str = "auto",
