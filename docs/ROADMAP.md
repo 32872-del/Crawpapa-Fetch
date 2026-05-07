@@ -40,10 +40,18 @@ Crawpapa-Fetch is moving from a capable single-server MCP prototype toward a pro
 - Add sample MCP client configurations.
 - Add optional dashboard/report generation for collection tests.
 
+### P5: Visualization Handoff
+
+- Add `prepare_visualization_payload` as a stable JSON handoff interface.
+- Support CSV, JSON, SQLite table, normalized records, and analysis-report inputs.
+- Infer visualization field roles: dimension, metric, label, metadata.
+- Suggest charts without rendering them inside the crawler core.
+- Keep optional rendering as a later second-stage tool.
+
 ## Non-Goals
 
 - CAPTCHA cracking.
 - Credential theft or account abuse.
 - Bypassing private network protections.
 - Ignoring robots.txt or target terms.
-
+- Turning Crawpapa-Fetch into a full dashboard product before the handoff contract is stable.

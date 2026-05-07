@@ -213,6 +213,7 @@ See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
 - [Linux and macOS Installation](docs/INSTALL_UNIX.md)
 - [Setup](docs/SETUP.md)
 - [Tool Guide](docs/TOOL_GUIDE.md)
+- [Visualization Handoff](docs/VISUALIZATION_HANDOFF.md)
 - [Packaging](docs/PACKAGING.md)
 - [Integrations](docs/INTEGRATIONS.md)
 - [Maintenance](docs/MAINTENANCE.md)

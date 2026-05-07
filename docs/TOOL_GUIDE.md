@@ -155,6 +155,21 @@ Use it before production crawler implementation, especially for price, image, de
 
 Converts an `analyze_site_for_crawl` JSON report into a human-readable Markdown report.
 
+### Planned: `prepare_visualization_payload`
+
+This planned tool will prepare a stable JSON payload for a future visualization MCP or dashboard.
+
+It will focus on:
+
+- dataset metadata
+- inferred schema
+- field roles
+- missing and duplicate rates
+- suggested charts
+- records preview
+
+See [Visualization Handoff Interface](VISUALIZATION_HANDOFF.md).
+
 ### `normalize_job_records`
 
 Normalizes job records from CSV/JSON/local file input.
