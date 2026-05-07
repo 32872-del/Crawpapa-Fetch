@@ -1,5 +1,5 @@
 """
-Crawpapa-Fetch v5.2 - Agent-oriented crawler analysis MCP service
+Crawpapa-Fetch v5.3 - Agent-oriented crawler analysis MCP service
 
 v5.0 主链：
 - scout_page -> draft_collection_plan -> validate_collection_plan -> execute_collection_plan
@@ -156,7 +156,7 @@ except ImportError:
 # ============ 配置 ============
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-SERVER_VERSION = "5.2.0"
+SERVER_VERSION = "5.3.0"
 SERVER_PROTOCOL_VERSION = ".".join(SERVER_VERSION.split(".")[:2])
 
 CONFIG = load_config(PROJECT_ROOT, SERVER_VERSION, warn=logger.warning)
@@ -2244,6 +2244,136 @@ def _v5_compat(data: dict[str, Any]) -> dict[str, Any]:
         key: value for key, value in (data or {}).items()
         if key not in reserved and not str(key).startswith("_")
     }
+
+def _loads_tool_result(raw: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {"ok": False, "value": parsed}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "raw": str(raw)[:1000]}
+
+def _compact_tool_payload(payload: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    compact: dict[str, Any] = {
+        "ok": payload.get("ok", payload.get("success", False)),
+        "error": payload.get("error", False),
+    }
+    for key in keys:
+        if key in payload:
+            compact[key] = payload.get(key)
+        elif isinstance(payload.get("data"), dict) and key in payload["data"]:
+            compact[key] = payload["data"].get(key)
+    diagnostics = payload.get("diagnostics")
+    if diagnostics:
+        compact["diagnostics"] = diagnostics
+    recommendations = payload.get("recommendations")
+    if recommendations:
+        compact["recommendations"] = recommendations[:5]
+    message = payload.get("message")
+    if message:
+        compact["message"] = message
+    return compact
+
+def _site_analysis_step(name: str, func, *args, compact_keys: list[str] | None = None, **kwargs) -> tuple[dict[str, Any], dict[str, Any]]:
+    started = time.time()
+    try:
+        payload = _loads_tool_result(func(*args, **kwargs))
+        ok = bool(payload.get("ok", payload.get("success", False)))
+        step = {
+            "name": name,
+            "ok": ok,
+            "duration_ms": round((time.time() - started) * 1000),
+        }
+        if payload.get("error"):
+            step["error"] = payload.get("message") or payload.get("type") or "tool_error"
+        return step, _compact_tool_payload(payload, compact_keys or [])
+    except Exception as exc:
+        return {
+            "name": name,
+            "ok": False,
+            "duration_ms": round((time.time() - started) * 1000),
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+        }, {"ok": False, "error": str(exc)[:500], "error_type": type(exc).__name__}
+
+def _append_unique_recommendation(target: list[dict[str, Any]], item: dict[str, Any]) -> None:
+    marker = (item.get("type") or item.get("action") or "", json.dumps(item.get("action", item.get("reason", "")), ensure_ascii=False, sort_keys=True))
+    seen = {
+        (existing.get("type") or existing.get("action") or "", json.dumps(existing.get("action", existing.get("reason", "")), ensure_ascii=False, sort_keys=True))
+        for existing in target
+    }
+    if marker not in seen:
+        target.append(item)
+
+def _build_site_analysis_summary(report: dict[str, Any]) -> dict[str, Any]:
+    access = report.get("access", {})
+    best_page = report.get("best_page", {})
+    scout = report.get("scout", {})
+    pagination = report.get("pagination", {})
+    detail = report.get("detail_samples", {})
+    network = report.get("network", {})
+    plan = report.get("plan", {})
+    validation = report.get("validation", {})
+
+    best_mode = (
+        access.get("summary", {}).get("best_mode")
+        or best_page.get("best_mode")
+        or best_page.get("best", {}).get("mode")
+        or scout.get("recommended_plan", {}).get("mode")
+        or ""
+    )
+    page = scout.get("page") or {}
+    network_candidates = network.get("network", {}).get("candidates") or []
+    api_hints = scout.get("api_hints", {})
+    if isinstance(api_hints, dict):
+        api_hint_count = api_hints.get("count", 0)
+    else:
+        api_hint_count = len(api_hints or [])
+    return {
+        "status": "ready_to_implement" if validation.get("ok") else "needs_review",
+        "best_mode": best_mode,
+        "access_ok": bool(access.get("ok")),
+        "page_html_bytes": page.get("html_bytes") or best_page.get("best", {}).get("length"),
+        "page_text_chars": page.get("text_chars"),
+        "truncated_likely": bool(page.get("truncated_likely")),
+        "api_hint_count": api_hint_count,
+        "network_candidate_count": len(network_candidates),
+        "pagination_type": (pagination.get("recommended") or {}).get("type", ""),
+        "sample_next_urls": pagination.get("sample_next_urls", []),
+        "list_selector": detail.get("list_selector_used") or scout.get("recommended_plan", {}).get("list_selector", ""),
+        "detail_links_found": detail.get("detail_links_found", 0),
+        "sampled_detail_count": detail.get("sampled_detail_count", 0),
+        "detail_risk_flags": detail.get("risk_flags", []),
+        "plan_ok": bool(validation.get("ok")),
+    }
+
+def _build_site_analysis_recommendations(report: dict[str, Any]) -> list[dict[str, Any]]:
+    recommendations: list[dict[str, Any]] = []
+    for section in ("access", "best_page", "network", "pagination", "scout", "detail_samples", "plan", "validation"):
+        for item in (report.get(section, {}) or {}).get("recommendations", [])[:5]:
+            if isinstance(item, dict):
+                _append_unique_recommendation(recommendations, item)
+    summary = report.get("summary", {})
+    if summary.get("best_mode"):
+        _append_unique_recommendation(recommendations, {
+            "type": "implementation_mode",
+            "action": {"mode": summary["best_mode"]},
+            "reason": "Use the highest-confidence access mode from the site analysis report.",
+            "confidence": 0.84,
+        })
+    if summary.get("detail_risk_flags"):
+        _append_unique_recommendation(recommendations, {
+            "type": "field_review_required",
+            "risk_flags": summary["detail_risk_flags"],
+            "reason": "Detail-field selectors may include product variants, buy-box text, or unrelated content.",
+            "confidence": 0.82,
+        })
+    if not summary.get("plan_ok"):
+        _append_unique_recommendation(recommendations, {
+            "type": "review_plan_before_execution",
+            "reason": "The generated collection plan needs review before production crawler implementation.",
+            "confidence": 0.8,
+        })
+    return recommendations[:20]
 
 def _json_or_lines(value: str) -> list:
     if not value:
@@ -6380,6 +6510,267 @@ def analyze_detail_samples(url: str, list_selector: str = "",
         ))
     except Exception as e:
         return _error_result(str(e), "detail_sample_analysis_failed")
+
+@mcp.tool()
+def analyze_site_for_crawl(url: str,
+                           goal: str = "product_list",
+                           fields: str = "title,price,image_src,body",
+                           modes: str = "requests,curl_cffi,browser",
+                           mode: str = "auto",
+                           list_selector: str = "",
+                           target_selector: str = "",
+                           sample_size: int = 3,
+                           max_pages: int = 3,
+                           max_items: int = 20,
+                           output: str = "json",
+                           output_format: str = "records",
+                           use_cache: bool = False,
+                           include_browser: bool = True,
+                           observe_network_flag: bool = True,
+                           wait_selector: str = "",
+                           render_time: float = 3.0,
+                           wait_until: str = "domcontentloaded",
+                           scroll_count: int = 0,
+                           scroll_delay: float = 1.0,
+                           respect_robots: bool = RESPECT_ROBOTS,
+                           allow_private: bool = False) -> str:
+    """
+    v5.3 unified site analysis report for Agent pre-crawl planning.
+
+    It runs access probing, best-page scoring, optional browser network observation,
+    pagination inference, page scouting, detail sampling, plan drafting, and plan
+    validation. Each step is fault tolerant so real-site failures become report
+    evidence instead of stopping the whole analysis.
+    """
+    try:
+        sample_size = max(1, min(int(sample_size), 8))
+        max_pages = max(1, min(int(max_pages), 10))
+        max_items = max(1, min(int(max_items), 500))
+        report: dict[str, Any] = {
+            "url": url,
+            "goal": goal,
+            "fields_requested": [item.strip() for item in fields.split(",") if item.strip()],
+            "steps": [],
+        }
+
+        requested_modes = [item.strip() for item in (modes or "").split(",") if item.strip()]
+        probe_modes = ",".join(requested_modes or ["requests", "curl_cffi", "browser"])
+        step, payload = _site_analysis_step(
+            "probe_access_strategy",
+            probe_access_strategy,
+            url,
+            target_selector=target_selector,
+            modes=probe_modes,
+            include_browser=include_browser,
+            use_cache=use_cache,
+            respect_robots=respect_robots,
+            allow_private=allow_private,
+            wait_selector=wait_selector,
+            render_time=render_time,
+            wait_until=wait_until,
+            scroll_count=scroll_count,
+            scroll_delay=scroll_delay,
+            compact_keys=["summary", "api_hints", "proxy"],
+        )
+        report["steps"].append(step)
+        report["access"] = payload
+
+        best_mode = payload.get("summary", {}).get("best_mode") or mode
+        effective_mode = best_mode if best_mode else mode
+        step, payload = _site_analysis_step(
+            "fetch_best_page",
+            fetch_best_page,
+            url,
+            modes=probe_modes,
+            target_selector=target_selector or wait_selector,
+            use_cache=use_cache,
+            respect_robots=respect_robots,
+            allow_private=allow_private,
+            return_html=False,
+            compact_keys=["best_mode", "best_score", "best", "candidates"],
+        )
+        report["steps"].append(step)
+        report["best_page"] = payload
+        effective_mode = payload.get("best_mode") or payload.get("best", {}).get("mode") or effective_mode
+
+        if observe_network_flag and include_browser and HAS_PLAYWRIGHT:
+            step, payload = _site_analysis_step(
+                "observe_browser_network",
+                observe_browser_network,
+                url,
+                wait_selector=wait_selector,
+                render_time=render_time,
+                wait_until=wait_until,
+                scroll_count=scroll_count,
+                scroll_delay=scroll_delay,
+                resource_types="xhr,fetch,document",
+                max_entries=120,
+                capture_json_sample=False,
+                respect_robots=respect_robots,
+                allow_private=allow_private,
+                compact_keys=["main_status", "page", "network"],
+            )
+            report["steps"].append(step)
+            report["network"] = payload
+        else:
+            report["steps"].append({
+                "name": "observe_browser_network",
+                "ok": False,
+                "skipped": True,
+                "reason": "browser observation disabled or Playwright unavailable",
+            })
+            report["network"] = {"ok": False, "skipped": True}
+
+        pagination_mode = "browser" if include_browser and HAS_PLAYWRIGHT and effective_mode == "browser" else effective_mode
+        step, payload = _site_analysis_step(
+            "infer_pagination_strategy",
+            infer_pagination_strategy,
+            url,
+            mode=pagination_mode or "auto",
+            use_cache=use_cache,
+            wait_selector=wait_selector,
+            render_time=render_time,
+            wait_until=wait_until,
+            scroll_count=scroll_count,
+            scroll_delay=scroll_delay,
+            observe_network_flag=bool(observe_network_flag and pagination_mode == "browser"),
+            max_pages=max_pages,
+            respect_robots=respect_robots,
+            allow_private=allow_private,
+            compact_keys=["recommended", "candidates", "sample_next_urls", "network_summary"],
+        )
+        report["steps"].append(step)
+        report["pagination"] = payload
+
+        step, payload = _site_analysis_step(
+            "scout_page",
+            scout_page,
+            url,
+            goal=goal,
+            mode=effective_mode or mode,
+            use_cache=use_cache,
+            target_selector=target_selector,
+            max_candidates=8,
+            respect_robots=respect_robots,
+            allow_private=allow_private,
+            compact_keys=["page", "initial_state", "menu_candidates", "link_candidates", "field_candidates", "api_hints", "recommended_plan"],
+        )
+        report["steps"].append(step)
+        report["scout"] = payload
+
+        link_candidates = payload.get("link_candidates") or []
+        inferred_selector = (
+            list_selector
+            or payload.get("recommended_plan", {}).get("list_selector", "")
+            or (link_candidates[0].get("selector", "") if link_candidates else "")
+        )
+        step, detail_payload = _site_analysis_step(
+            "analyze_detail_samples",
+            analyze_detail_samples,
+            url,
+            list_selector=inferred_selector,
+            target_fields=fields,
+            mode=effective_mode or mode,
+            use_cache=use_cache,
+            sample_size=sample_size,
+            wait_selector=wait_selector,
+            render_time=render_time,
+            wait_until=wait_until,
+            scroll_count=scroll_count,
+            scroll_delay=scroll_delay,
+            respect_robots=respect_robots,
+            allow_private=allow_private,
+            compact_keys=["list_selector_used", "detail_links_found", "sampled_detail_count", "site_spec", "confidence", "risk_flags", "samples"],
+        )
+        report["steps"].append(step)
+        report["detail_samples"] = detail_payload
+
+        step, plan_payload = _site_analysis_step(
+            "draft_collection_plan",
+            draft_collection_plan,
+            url,
+            goal=goal,
+            fields=fields,
+            mode=effective_mode or mode,
+            max_items=max_items,
+            output=output,
+            output_format=output_format,
+            use_cache=use_cache,
+            respect_robots=respect_robots,
+            allow_private=allow_private,
+            compact_keys=["plan", "confidence", "recommendation", "reasons", "scout_summary"],
+        )
+        report["steps"].append(step)
+        plan_obj = plan_payload.get("plan") or {}
+        detail_spec = detail_payload.get("site_spec", {}).get("detail") if isinstance(detail_payload.get("site_spec"), dict) else {}
+        if detail_spec:
+            plan_obj["fields"] = detail_spec
+        if inferred_selector and not plan_obj.get("list_selector"):
+            plan_obj["list_selector"] = inferred_selector
+        plan_obj["mode"] = effective_mode or plan_obj.get("mode") or mode
+        plan_obj["max_items"] = max_items
+        plan_obj["output_format"] = output_format
+        plan_obj["use_cache"] = use_cache
+        plan_obj["respect_robots"] = respect_robots
+        plan_obj["allow_private"] = allow_private
+        if plan_obj.get("assumptions"):
+            plan_obj["assumptions"] = list(dict.fromkeys(plan_obj["assumptions"]))
+        report["plan"] = {**plan_payload, "plan": plan_obj}
+
+        step, payload = _site_analysis_step(
+            "validate_collection_plan",
+            validate_collection_plan,
+            json.dumps(plan_obj, ensure_ascii=False),
+            sample=True,
+            allow_private=allow_private,
+            compact_keys=["pipeline", "sample", "errors", "warnings"],
+        )
+        report["steps"].append(step)
+        report["validation"] = payload
+
+        report["summary"] = _build_site_analysis_summary(report)
+        report["implementation_hints"] = {
+            "mode": report["summary"].get("best_mode") or plan_obj.get("mode"),
+            "list_selector": report["summary"].get("list_selector"),
+            "detail_fields": plan_obj.get("fields", {}),
+            "pagination": report["pagination"].get("recommended", {}),
+            "sample_next_urls": report["summary"].get("sample_next_urls", []),
+            "risk_flags": report["summary"].get("detail_risk_flags", []),
+        }
+        recommendations = _build_site_analysis_recommendations(report)
+        return _success_result(_v5_envelope(
+            bool(report["summary"].get("access_ok")) and bool(report["summary"].get("plan_ok")),
+            data={
+                "summary": report["summary"],
+                "implementation_hints": report["implementation_hints"],
+                "plan": plan_obj,
+                "validation": report.get("validation"),
+            },
+            diagnostics={"steps": report["steps"], "sections": {
+                "access": report.get("access"),
+                "best_page": report.get("best_page"),
+                "network": report.get("network"),
+                "pagination": report.get("pagination"),
+                "scout": report.get("scout"),
+                "detail_samples": report.get("detail_samples"),
+            }},
+            recommendations=recommendations,
+            **_v5_compat(report),
+        ))
+    except Exception as e:
+        return _success_result(_v5_envelope(
+            False,
+            data={"url": url, "goal": goal},
+            diagnostics={"error": str(e), "type": "site_analysis_failed"},
+            recommendations=[{
+                "type": "retry_with_lower_scope",
+                "reason": "Site analysis failed before a complete report was produced. Retry with include_browser=false or a narrower target selector.",
+                "confidence": 0.75,
+            }],
+            error=True,
+            type="site_analysis_failed",
+            message=str(e),
+        ))
 
 @mcp.tool()
 def infer_site_selectors(url: str, target_fields: str = "list_link,title,price,image_src,body",

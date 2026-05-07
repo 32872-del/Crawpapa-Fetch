@@ -4,6 +4,31 @@ This guide describes the main Crawpapa-Fetch MCP tools from an operator perspect
 
 ## Access Strategy
 
+### `analyze_site_for_crawl`
+
+Runs the recommended pre-crawl workflow as one report:
+
+```text
+probe_access_strategy
+fetch_best_page
+observe_browser_network
+infer_pagination_strategy
+scout_page
+analyze_detail_samples
+draft_collection_plan
+validate_collection_plan
+```
+
+Use it as the first tool when an Agent needs enough context to write crawler code.
+
+Output highlights:
+
+- `data.summary`: concise readiness and confidence summary.
+- `data.implementation_hints`: mode, selectors, pagination, detail fields, and risk flags.
+- `data.plan`: generated collection plan.
+- `diagnostics.steps`: step-by-step execution status.
+- `diagnostics.sections`: compact evidence from each lower-level tool.
+
 ### `probe_access_strategy`
 
 Compares access modes and classifies failures.
@@ -130,4 +155,3 @@ Adds:
 - `quality_grade`
 
 Use A/B rows for analysis. Review C/D rows manually before making decisions.
-

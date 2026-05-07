@@ -786,6 +786,33 @@ def test_analyze_detail_samples_enters_detail_pages_and_infers_fields():
     assert result["risk_flags"] == []
 
 
+def test_analyze_site_for_crawl_builds_unified_report():
+    with _local_site() as site:
+        result = json.loads(server.analyze_site_for_crawl(
+            f"{site}/products-page",
+            goal="product_list",
+            fields="title,price,image_src,body",
+            modes="requests",
+            include_browser=False,
+            observe_network_flag=False,
+            use_cache=False,
+            sample_size=2,
+            max_pages=2,
+            respect_robots=False,
+            allow_private=True,
+        ))
+
+    assert result["ok"] is True
+    assert result["version"].startswith("5.")
+    assert result["summary"]["best_mode"] == "requests"
+    assert result["summary"]["list_selector"]
+    assert result["summary"]["sampled_detail_count"] == 2
+    assert result["implementation_hints"]["detail_fields"]["title"].startswith("h1.")
+    assert result["validation"]["ok"] is True
+    assert any(step["name"] == "analyze_detail_samples" and step["ok"] for step in result["steps"])
+    assert any(item.get("type") == "implementation_mode" for item in result["recommendations"])
+
+
 def test_infer_site_selectors_returns_ranked_candidates():
     with _local_site() as site:
         result = json.loads(server.infer_site_selectors(

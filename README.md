@@ -14,8 +14,8 @@ Crawpapa-Fetch is not a CAPTCHA cracker, account bypass tool, or stealth abuse f
 
 ## Status
 
-- Current version: `5.2.0`
-- Test baseline: `101 passed, 1 skipped`
+- Current version: `5.3.0`
+- Test baseline: `104 passed, 1 skipped`
 - Primary MCP server: `unified_crawler_server.py`
 - Package name: `crawpapa-fetch`
 - CLI commands:
@@ -26,6 +26,12 @@ Crawpapa-Fetch is not a CAPTCHA cracker, account bypass tool, or stealth abuse f
 ## Core Workflow
 
 Recommended analysis chain:
+
+```text
+analyze_site_for_crawl
+```
+
+Or, if you want to inspect each stage yourself:
 
 ```text
 probe_access_strategy
@@ -45,6 +51,7 @@ For pre-crawl analysis, you usually stop at `validate_collection_plan` or `expor
 
 Access and rendering:
 
+- `analyze_site_for_crawl`
 - `probe_access_strategy`
 - `fetch_best_page`
 - `fetch_page`
@@ -140,6 +147,13 @@ Or after installation:
 
 ```powershell
 crawpapa-fetch --server crawler
+```
+
+Run a pre-crawl report from the CLI:
+
+```bash
+crawpapa-fetch analyze https://example.com/products --goal product_list --output-file report.json
+crawpapa-fetch diagnose https://example.com/products
 ```
 
 ## Packaging

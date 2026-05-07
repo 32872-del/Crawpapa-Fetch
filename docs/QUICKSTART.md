@@ -1,4 +1,4 @@
-# Crawpapa-Fetch v5.2 Quickstart
+# Crawpapa-Fetch v5.3 Quickstart
 
 ## 0. Installation
 
@@ -22,6 +22,24 @@ cd Crawpapa-Fetch
 ```
 
 See [INSTALL_UNIX.md](INSTALL_UNIX.md) for Linux/macOS details.
+
+## 0.5. One-command analysis
+
+For most Agent pre-crawl work, start with the unified report:
+
+```bash
+crawpapa-fetch analyze https://example.com/products --goal product_list --output-file report.json
+```
+
+Equivalent MCP tool:
+
+```text
+analyze_site_for_crawl(
+  url="https://example.com/products",
+  goal="product_list",
+  fields="title,price,image_src,body"
+)
+```
 
 ## 1. 启动前检查
 
