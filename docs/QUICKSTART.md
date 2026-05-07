@@ -10,18 +10,13 @@ print(s.diagnose_crawler_setup())
 PY
 ```
 
-如果需要使用本地 VPN 代理，先设置：
+如果需要使用本地 VPN 或代理客户端，先设置本地 HTTP 代理：
 
 ```text
-set_proxy(proxy_url="http://127.0.0.1:8800", proxy_type="local")
+set_proxy(proxy_url="http://127.0.0.1:7890", proxy_type="local")
 ```
 
-你截图里的 QuickQ 端口大致是：
-
-- HTTP: `http://127.0.0.1:8800`
-- SOCKS5: `socks5://127.0.0.1:10020`
-
-当前 MCP 内部 HTTP 请求更适合先用 HTTP 端口。
+不同代理客户端端口不同，请以你的客户端为准。当前 MCP 内部 HTTP 请求更适合先用 HTTP 端口。
 
 ## 2. 推荐分析流程
 

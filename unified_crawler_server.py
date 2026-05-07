@@ -1565,8 +1565,8 @@ def _probe_access_modes(url: str, target_selector: str = "", modes: list[str] | 
         "local_proxy": local_proxy,
         "pool_count": _proxy_pool.count,
         "pool_status": _proxy_pool.get_status() if _proxy_pool.count > 0 else [],
-        "suggested_local_proxy": "http://127.0.0.1:8800",
-        "note": "QuickQ 图片里 http=8800、socks5=10020；HTTP 代理可用 set_proxy('http://127.0.0.1:8800') 接入。",
+        "suggested_local_proxy": "http://127.0.0.1:7890",
+        "note": "如需使用本地代理，请用 set_proxy 设置你的 HTTP 代理端口；端口以本机代理客户端为准。",
     }
     summary_categories = sorted({
         category
