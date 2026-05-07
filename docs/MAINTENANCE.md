@@ -68,6 +68,8 @@ probe_access_strategy -> observe_browser_network -> infer_pagination_strategy ->
 
 - 不提交 `.venv/`、缓存、数据库、日志、cookie、任务状态。
 - 不提交真实代理、账号、Cookie、API key。
+- 运行 `python tools/maintenance/secret_audit.py`。
 - 运行 `pytest -q`。
 - 运行 `diagnose_crawler_setup`。
+- 运行 `python tools/maintenance/build_package.py` 或 `pack.bat`。
 - 确认 README 写明合规边界。

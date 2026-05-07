@@ -2050,7 +2050,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mcp-crawler-cluster"
+name = "crawpapa-fetch"
 version = "5.2.0"
 source = { editable = "." }
 dependencies = [

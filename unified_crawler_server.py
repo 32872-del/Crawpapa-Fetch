@@ -1,5 +1,5 @@
-﻿"""
-Unified Crawler MCP Server v5.0 - Agent-oriented crawler MCP service
+"""
+Crawpapa-Fetch v5.2 - Agent-oriented crawler analysis MCP service
 
 v5.0 主链：
 - scout_page -> draft_collection_plan -> validate_collection_plan -> execute_collection_plan
@@ -109,7 +109,7 @@ except ImportError:
 
 # ============ 日志系统 ============
 
-logger = logging.getLogger("unified-crawler")
+logger = logging.getLogger("crawpapa-fetch")
 logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     _handler = logging.StreamHandler(sys.stderr)
@@ -212,7 +212,7 @@ if not VERIFY_TLS:
     _requests_lib.packages.urllib3.disable_warnings()
 _requests_lib.adapters.DEFAULT_RETRIES = 5
 
-mcp = FastMCP("unified-crawler")
+mcp = FastMCP("Crawpapa-Fetch")
 
 # ============ UA 与 TLS 指纹匹配 ============
 
@@ -5653,7 +5653,7 @@ def diagnose_crawler_setup() -> str:
         pyproject_version = _project_version_from_file(PROJECT_ROOT / "pyproject.toml", r'version\s*=\s*"([^"]+)"')
         lock_version = _project_version_from_file(
             PROJECT_ROOT / "uv.lock",
-            r'name\s*=\s*"mcp-crawler-cluster"\s+version\s*=\s*"([^"]+)"',
+            r'name\s*=\s*"crawpapa-fetch"\s+version\s*=\s*"([^"]+)"',
         )
         if pyproject_version == SERVER_VERSION == lock_version:
             _add_preflight_check(checks, "version_alignment", "ok", f"版本一致: {SERVER_VERSION}")

@@ -4,7 +4,7 @@ Date: 2026-05-07
 
 ## Test Goal
 
-Use the Crawler MCP as a pre-crawl analysis and extraction assistant to collect public Agent/AI Agent development job postings from online recruitment sources.
+Use the Crawpapa-Fetch as a pre-crawl analysis and extraction assistant to collect public Agent/AI Agent development job postings from online recruitment sources.
 
 Required output fields:
 

@@ -3,7 +3,7 @@ setlocal
 
 echo.
 echo ========================================
-echo   Crawler MCP Server v4.0 Check
+echo   Crawpapa-Fetch v5.2 Check
 echo ========================================
 echo.
 

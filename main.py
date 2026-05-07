@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP Crawler Cluster - 入口文件"""
+"""Crawpapa-Fetch - 入口文件"""
 import sys
 import argparse
 from pathlib import Path
@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MCP Crawler Cluster")
+    parser = argparse.ArgumentParser(description="Crawpapa-Fetch")
     parser.add_argument("--run", action="store_true", help="运行 Agent 爬虫集群")
     parser.add_argument(
         "--server", choices=["crawler", "spider"], help="启动指定 MCP Server"

@@ -5,7 +5,7 @@ This project is organized around a stable MCP runtime, reusable tooling, runtime
 ## Top-Level Areas
 
 ```text
-crawler-mcp-server-v4.0/
+Crawpapa-Fetch/
   unified_crawler_server.py      # Current MCP server entry and tool registry
   main.py                        # Console entry wrapper
   crawler_core/                  # Reusable crawler engine modules
@@ -16,6 +16,7 @@ crawler-mcp-server-v4.0/
   workspace/                     # Local experiments, scratch files, and temporary working sets
   tests/                         # Automated tests
   tests/reports/                 # Manual test reports and task evaluations
+  .github/workflows/             # CI workflows
   docs/                          # User, maintenance, integration, and architecture docs
   schemas/                       # Data schemas used by save/query tools
   templates/                     # Reusable crawl pipeline templates
@@ -49,6 +50,8 @@ crawler-mcp-server-v4.0/
 
 - `tools/maintenance/`
   - Project maintenance scripts such as cleanup, migration, release checks, or data pruning.
+  - `secret_audit.py` must pass before release.
+  - `build_package.py` builds portable zip and optional Python distribution artifacts.
 
 ### Workspace
 

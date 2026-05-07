@@ -1,7 +1,7 @@
 [project]
-name = "mcp-crawler-cluster"
+name = "crawpapa-fetch"
 version = "5.2.0"
-description = "Enterprise-grade Crawler MCP Server with anti-detection, async batch, three-tier auto-mode, DNS rebinding protection"
+description = "Agent-oriented crawler analysis MCP server for access diagnostics, page understanding, crawl planning, and structured data QA"
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0",
@@ -12,6 +12,8 @@ dependencies = [
 ]
 
 [project.scripts]
+crawpapa-fetch = "main:main"
+crawpapa-setup-clients = "setup_mcp_clients:main"
 crawler-mcp = "main:main"
 crawler-setup-clients = "setup_mcp_clients:main"
 

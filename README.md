@@ -1,79 +1,60 @@
-# Crawler MCP Server v5.2
+# Crawpapa-Fetch
 
-面向 LLM/Agent 的网页采集侦察 MCP。它的定位不是替代你的正式采集框架，而是在写采集代码之前，帮助 Agent 更快判断：
+Crawpapa-Fetch is an agent-oriented crawler analysis MCP server. It helps LLMs and operators understand a website before writing or running a production crawler.
 
-- 页面能否合规访问，失败原因是什么。
-- 应该使用 requests、curl_cffi、browser、代理还是授权 Cookie。
-- 商品列表、目录、字段 selector、初始状态 JSON、脚本 URL、公开 API 线索在哪里。
-- 如何生成稳定的 `collection_plan` 或导出给采集框架使用的 site spec。
+It is designed for:
 
-推荐主链：
+- Access diagnostics across `requests`, `curl_cffi`, browser rendering, proxies, and authorized cookies.
+- Page structure discovery: selectors, initial-state JSON, navigation trees, script URLs, API hints, and structured data.
+- Pagination and detail-page scouting.
+- Crawl plan drafting, validation, and export.
+- Structured data quality checks such as job record normalization and quality grading.
+
+Crawpapa-Fetch is not a CAPTCHA cracker, account bypass tool, or stealth abuse framework. It is intended for lawful analysis of public pages and authorized data sources.
+
+## Status
+
+- Current version: `5.2.0`
+- Test baseline: `101 passed, 1 skipped`
+- Primary MCP server: `unified_crawler_server.py`
+- Package name: `crawpapa-fetch`
+- CLI commands:
+  - `crawpapa-fetch`
+  - `crawpapa-setup-clients`
+  - legacy aliases: `crawler-mcp`, `crawler-setup-clients`
+
+## Core Workflow
+
+Recommended analysis chain:
 
 ```text
 probe_access_strategy
+  -> fetch_best_page
   -> observe_browser_network
   -> infer_pagination_strategy
   -> analyze_detail_samples
   -> scout_page
   -> draft_collection_plan
   -> validate_collection_plan
-  -> execute_collection_plan
+  -> export_site_spec_to_spider or execute_collection_plan
 ```
 
-如果只是做前置分析，通常跑到 `validate_collection_plan` 或 `export_site_spec_to_spider` 就够了。
+For pre-crawl analysis, you usually stop at `validate_collection_plan` or `export_site_spec_to_spider` and pass the result to your own crawler framework.
 
-## v5.2 核心能力
+## Key MCP Tools
 
-- 访问穿透诊断：`probe_access_strategy` 对比 `requests/curl_cffi/browser/proxy`，分类 challenge、403、429、JS shell、HTML 截断、API 线索等。
-- 浏览器网络观测：`observe_browser_network` 捕获 XHR/fetch/document，识别 JSON/API 候选和翻页参数。
-- 翻页识别：`infer_pagination_strategy` 识别 DOM next、query page、offset/cursor 等翻页方式。
-- 详情页深度侦察：`analyze_detail_samples` 从列表页抽详情链接，低频进入详情页样本，反推详情字段 selector 和风险。
-- 页面业务结构理解：`extract_initial_state` 支持读取 `navigation.multiBrandMenu[0].mainMenu` 这类真实前端状态路径。
-- 菜单来源比较：`compare_menu_sources` 输出候选来源、推荐来源、过滤报告和解释。
-- 选择器推断：`infer_site_selectors`、`infer_site_spec_from_samples` 生成列表和详情字段候选。
-- 0 命中诊断：`crawl_list` 在 selector 0 命中时会检查 DOM、脚本 URL、challenge、JS shell 和截断信号。
-- 计划化输出：高层入口统一返回 `ok/version/data/diagnostics/recommendations`，方便 Agent 读取。
-- 最佳响应选择：`fetch_best_page` 会并行式比较 `requests/curl_cffi/browser` 等模式的响应质量，优先选择包含 JSON-LD、目标 selector、非 challenge 的 HTML。
-- 岗位数据治理：`normalize_job_records` 将招聘记录标准化为分析 schema，输出薪资拆分、地点归一、描述去噪和 A/B/C/D 质量分级。
-
-## 安装
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[full,dev]"
-.\.venv\Scripts\playwright.exe install chromium
-.\.venv\Scripts\python.exe setup_mcp_clients.py
-```
-
-启动：
-
-```powershell
-.\.venv\Scripts\python.exe unified_crawler_server.py
-```
-
-验证：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-## 常用工具
-
-访问与穿透分析：
+Access and rendering:
 
 - `probe_access_strategy`
 - `fetch_best_page`
-- `observe_browser_network`
-- `infer_pagination_strategy`
-- `analyze_detail_samples`
-- `diagnose_access_strategy`
 - `fetch_page`
 - `fetch_page_browser`
-- `scroll_and_load`
-- `take_screenshot`
+- `fetch_pages_batch`
+- `observe_browser_network`
+- `diagnose_access_strategy`
 - `set_proxy`
 
-页面理解：
+Page understanding:
 
 - `scout_page`
 - `extract_initial_state`
@@ -81,8 +62,16 @@ python -m venv .venv
 - `infer_category_tree`
 - `infer_site_selectors`
 - `infer_site_spec_from_samples`
+- `extract_structured_data`
 
-计划与导出：
+Pagination and detail analysis:
+
+- `infer_pagination_strategy`
+- `analyze_detail_samples`
+- `crawl_list`
+- `crawl_product`
+
+Plan and export:
 
 - `draft_collection_plan`
 - `validate_collection_plan`
@@ -91,37 +80,98 @@ python -m venv .venv
 - `validate_site_spec`
 - `export_site_spec_to_spider`
 
-运行与存储：
+Data quality:
 
-- `crawl_list`
-- `crawl_product`
-- `run_crawl_pipeline`
-- `fetch_pages_batch`
 - `normalize_job_records`
 - `save_data`
 - `save_to_db`
-- `frontier_*`
+- `save_batch_to_db`
+- `query_db`
 
-## 合规边界
+## Installation
 
-本项目用于公开页面的合规采集分析，不提供验证码破解、账号风控绕过或未授权访问能力。遇到 challenge/captcha/login wall 时，工具会建议使用授权 Cookie、公开 API、降低频率、人工确认或放弃采集。
+Windows PowerShell:
 
-## 文档
+```powershell
+git clone https://github.com/32872-del/Crawpapa-Fetch.git
+cd Crawpapa-Fetch
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[full,dev]"
+.\.venv\Scripts\playwright.exe install chromium
+.\.venv\Scripts\python.exe setup_mcp_clients.py
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Start the server:
+
+```powershell
+.\.venv\Scripts\python.exe unified_crawler_server.py
+```
+
+Or after installation:
+
+```powershell
+crawpapa-fetch --server crawler
+```
+
+## Packaging
+
+Build Python distribution artifacts and a portable zip:
+
+```powershell
+.\pack.bat
+```
+
+Equivalent Python command:
+
+```powershell
+.\.venv\Scripts\python.exe tools\maintenance\build_package.py
+```
+
+Outputs are written to `dist/`.
+
+The packaging flow runs a secret audit first:
+
+```powershell
+.\.venv\Scripts\python.exe tools\maintenance\secret_audit.py
+```
+
+## Project Layout
+
+```text
+crawler_core/                  reusable crawler engine modules
+unified_crawler_server.py      MCP tool registration and server entry
+agents/                        optional agent orchestration integrations
+tools/                         operator scripts and maintenance tools
+workspace/                     local experiments and scratch work
+tests/                         automated tests
+tests/reports/                 manual task reports and evaluations
+docs/                          setup, maintenance, integration, and architecture docs
+output/                        generated exports only
+cache/ cookies/ databases/
+frontier/ jobs/ logs/          runtime state, ignored except .gitkeep
+```
+
+See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
+
+## Documentation
 
 - [Quickstart](docs/QUICKSTART.md)
 - [Setup](docs/SETUP.md)
+- [Tool Guide](docs/TOOL_GUIDE.md)
+- [Packaging](docs/PACKAGING.md)
 - [Integrations](docs/INTEGRATIONS.md)
 - [Maintenance](docs/MAINTENANCE.md)
 - [Project Structure](docs/PROJECT_STRUCTURE.md)
-- [v5.0 Release Notes](RELEASE_NOTES_v5.0.md)
-- [v5.1 Release Notes](RELEASE_NOTES_v5.1.md)
-- [v5.2 Release Notes](RELEASE_NOTES_v5.2.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Security](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 
-## 项目分区
+## Compliance Boundary
 
-- `crawler_core/`: 可复用采集、解析、诊断、队列和安全模块。
-- `unified_crawler_server.py`: 当前 MCP 工具注册与服务入口，后续逐步拆分。
-- `tools/`: 操作者脚本和数据任务脚本，不注册为 MCP 工具。
-- `workspace/`: 本地实验区和临时工作区。
-- `tests/`: 自动化测试；`tests/reports/` 存放人工测试报备。
-- `output/`: 生成的 CSV/JSON/HTML/截图等结果文件，不放脚本。
+Crawpapa-Fetch is built for public and authorized collection analysis. It will not intentionally bypass CAPTCHA, login walls, access controls, or private network protections. When a target returns a challenge or requires authorization, the tools should report that condition and recommend permitted alternatives such as official APIs, authorized cookies, lower rate limits, or manual review.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+

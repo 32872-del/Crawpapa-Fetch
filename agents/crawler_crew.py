@@ -1,4 +1,4 @@
-"""MCP Crawler Cluster - Agent 集群
+"""Crawpapa-Fetch - Agent 集群
 
 Agent 通过 MCP Client 调用 MCP Server 的工具（而非本地实现）。
 支持多个 MCP Server：基础爬虫 + spider 高级爬虫。

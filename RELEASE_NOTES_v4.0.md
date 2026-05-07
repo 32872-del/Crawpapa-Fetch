@@ -1,4 +1,4 @@
-# Crawler MCP Server v4.0 Release Notes
+# Crawpapa-Fetch v4.0 Release Notes
 
 发布日期：2026-05-04
 
@@ -51,7 +51,7 @@ pytest -q tests/
 
 ## 升级方式
 
-1. 解压 `crawler-mcp-server-v4.0.zip` 到目标目录
+1. 解压 `Crawpapa-Fetch.zip` 到目标目录
 2. 运行 `install.bat`（自动安装新增的 httpx + parsel + jsonpath-ng）
 3. 重启 Codex / Claude Code / VS Code
 4. 旧的 cache/cookies/databases/frontier 数据完全兼容
