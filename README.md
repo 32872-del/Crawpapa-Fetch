@@ -90,7 +90,35 @@ Data quality:
 
 ## Installation
 
-Windows PowerShell:
+### Linux and macOS
+
+```bash
+git clone https://github.com/32872-del/Crawpapa-Fetch.git
+cd Crawpapa-Fetch
+chmod +x install.sh start.sh pack.sh
+./install.sh
+./start.sh
+```
+
+Manual install:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[full,dev]"
+.venv/bin/python -m playwright install chromium
+.venv/bin/python setup_mcp_clients.py
+.venv/bin/python -m pytest -q
+```
+
+Start the server:
+
+```bash
+.venv/bin/python unified_crawler_server.py
+```
+
+See [Linux and macOS Installation](docs/INSTALL_UNIX.md) for system dependencies, Playwright notes, and packaging commands.
+
+### Windows PowerShell
 
 ```powershell
 git clone https://github.com/32872-del/Crawpapa-Fetch.git
@@ -120,6 +148,12 @@ Build Python distribution artifacts and a portable zip:
 
 ```powershell
 .\pack.bat
+```
+
+Linux/macOS:
+
+```bash
+./pack.sh
 ```
 
 Equivalent Python command:
@@ -157,6 +191,7 @@ See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md).
 ## Documentation
 
 - [Quickstart](docs/QUICKSTART.md)
+- [Linux and macOS Installation](docs/INSTALL_UNIX.md)
 - [Setup](docs/SETUP.md)
 - [Tool Guide](docs/TOOL_GUIDE.md)
 - [Packaging](docs/PACKAGING.md)
@@ -174,4 +209,3 @@ Crawpapa-Fetch is built for public and authorized collection analysis. It will n
 ## License
 
 MIT. See [LICENSE](LICENSE).
-

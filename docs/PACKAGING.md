@@ -7,6 +7,14 @@ Crawpapa-Fetch supports two packaging modes:
 
 ## Build Everything
 
+Linux/macOS:
+
+```bash
+./pack.sh
+```
+
+Windows:
+
 ```powershell
 .\pack.bat
 ```
@@ -28,17 +36,43 @@ python -m build
 
 ## Python Build Directly
 
+Linux/macOS:
+
+```bash
+.venv/bin/python tools/maintenance/build_package.py --skip-zip
+```
+
+Windows:
+
 ```powershell
 .\.venv\Scripts\python.exe tools\maintenance\build_package.py --skip-zip
 ```
 
 ## Portable Zip Only
 
+Linux/macOS:
+
+```bash
+.venv/bin/python tools/maintenance/build_package.py --skip-python-dist
+```
+
+Windows:
+
 ```powershell
 .\.venv\Scripts\python.exe tools\maintenance\build_package.py --skip-python-dist
 ```
 
 ## Pre-Release Checklist
+
+Linux/macOS:
+
+```bash
+.venv/bin/python tools/maintenance/secret_audit.py
+.venv/bin/python -m pytest -q
+./pack.sh
+```
+
+Windows:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\maintenance\secret_audit.py

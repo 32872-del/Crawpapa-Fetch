@@ -1,5 +1,28 @@
 # Crawpapa-Fetch v5.2 Quickstart
 
+## 0. Installation
+
+Linux/macOS:
+
+```bash
+git clone https://github.com/32872-del/Crawpapa-Fetch.git
+cd Crawpapa-Fetch
+chmod +x install.sh start.sh pack.sh
+./install.sh
+./start.sh
+```
+
+Windows:
+
+```powershell
+git clone https://github.com/32872-del/Crawpapa-Fetch.git
+cd Crawpapa-Fetch
+.\install_portable.bat
+.\start.bat
+```
+
+See [INSTALL_UNIX.md](INSTALL_UNIX.md) for Linux/macOS details.
+
 ## 1. 启动前检查
 
 ```powershell

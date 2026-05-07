@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 import setup_mcp_clients as setup_clients
@@ -34,3 +35,18 @@ def test_codex_config_includes_data_dir_and_safety_overrides(tmp_path, monkeypat
     assert "CRAWLER_DATA_DIR" in content
     assert 'CRAWLER_ALLOW_REQUEST_PRIVATE_OVERRIDE = "false"' in content
     assert 'CRAWLER_ALLOW_INSECURE_TLS_OVERRIDE = "false"' in content
+
+
+def test_vscode_config_uses_platform_venv_python(tmp_path, monkeypatch):
+    root = tmp_path / "crawler"
+    root.mkdir()
+
+    monkeypatch.setattr(setup_clients, "ROOT", root)
+    target = setup_clients.write_vscode_config()
+
+    config = json.loads(target.read_text(encoding="utf-8"))
+    command = config["servers"]["crawler"]["command"]
+    if os.name == "nt":
+        assert command == "${workspaceFolder}/.venv/Scripts/python.exe"
+    else:
+        assert command == "${workspaceFolder}/.venv/bin/python"

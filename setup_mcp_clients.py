@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate local MCP client configuration for Codex, Claude Code, and VS Code."""
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,12 @@ def _python_command() -> str:
         if candidate.exists():
             return _as_posix(candidate)
     return sys.executable or "python"
+
+
+def _workspace_python_expr() -> str:
+    if os.name == "nt":
+        return "${workspaceFolder}/.venv/Scripts/python.exe"
+    return "${workspaceFolder}/.venv/bin/python"
 
 
 def _shared_env() -> dict[str, str]:
@@ -88,7 +95,7 @@ def write_vscode_config() -> Path:
         "servers": {
             "crawler": {
                 "type": "stdio",
-                "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+                "command": _workspace_python_expr(),
                 "args": ["${workspaceFolder}/unified_crawler_server.py"],
                 "env": {
                     "PYTHONPATH": "${workspaceFolder}",
