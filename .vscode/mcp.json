@@ -1,0 +1,28 @@
+{
+  "inputs": [],
+  "servers": {
+    "crawler": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": [
+        "${workspaceFolder}/unified_crawler_server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "CRAWLER_DATA_DIR": "${workspaceFolder}/.crawler-data",
+        "CRAWLER_VERIFY_TLS": "true",
+        "CRAWLER_RESPECT_ROBOTS": "true",
+        "CRAWLER_ALLOW_PRIVATE_NETS": "false",
+        "CRAWLER_PERSIST_COOKIES": "true",
+        "CRAWLER_ALLOW_REQUEST_PRIVATE_OVERRIDE": "false",
+        "CRAWLER_ALLOW_INSECURE_TLS_OVERRIDE": "false"
+      },
+      "dev": {
+        "watch": "${workspaceFolder}/**/*.py",
+        "debug": {
+          "type": "python"
+        }
+      }
+    }
+  }
+}

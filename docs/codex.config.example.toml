@@ -1,0 +1,17 @@
+[mcp_servers.crawler]
+command = ".venv/Scripts/python.exe"
+args = ["unified_crawler_server.py"]
+cwd = "."
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+enabled = true
+
+[mcp_servers.crawler.env]
+PYTHONPATH = "."
+CRAWLER_DATA_DIR = ".crawler-data"
+CRAWLER_VERIFY_TLS = "true"
+CRAWLER_RESPECT_ROBOTS = "true"
+CRAWLER_ALLOW_PRIVATE_NETS = "false"
+CRAWLER_PERSIST_COOKIES = "true"
+CRAWLER_ALLOW_REQUEST_PRIVATE_OVERRIDE = "false"
+CRAWLER_ALLOW_INSECURE_TLS_OVERRIDE = "false"

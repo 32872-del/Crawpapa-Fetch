@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and build metadata
+.venv/
+venv/
+env/
+*.egg-info/
+build/
+dist/
+
+# Local environment
+.env
+.mcp.json
+.codex/config.toml
+
+# Runtime crawler state
+.crawler-data/
+cache/*
+cookies/*
+databases/*
+frontier/*
+jobs/*
+logs/*
+output/*
+templates/*
+schemas/test_*.json
+
+# Keep directory placeholders when present
+!cache/.gitkeep
+!cookies/.gitkeep
+!databases/.gitkeep
+!frontier/.gitkeep
+!jobs/.gitkeep
+!logs/.gitkeep
+!output/.gitkeep
+!schemas/.gitkeep
+!templates/.gitkeep
+
+# Local editor noise
+.DS_Store
+Thumbs.db

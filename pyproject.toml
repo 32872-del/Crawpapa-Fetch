@@ -1,0 +1,66 @@
+[project]
+name = "mcp-crawler-cluster"
+version = "5.2.0"
+description = "Enterprise-grade Crawler MCP Server with anti-detection, async batch, three-tier auto-mode, DNS rebinding protection"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0,<3.0",
+]
+
+[project.scripts]
+crawler-mcp = "main:main"
+crawler-setup-clients = "setup_mcp_clients:main"
+
+[project.optional-dependencies]
+# 反爬增强（推荐安装）
+anti-detect = [
+    "curl_cffi>=0.5.0",
+    "fake-useragent>=1.4.0",
+]
+# 浏览器渲染（需要额外安装浏览器引擎）
+browser = [
+    "playwright>=1.40.0",
+]
+# v4.0 新增：异步并发 + XPath/JSONPath 解析
+async-fetch = [
+    "httpx[http2]>=0.27.0",
+    "anyio>=4.0.0",
+]
+parsing = [
+    "parsel>=1.9.0",
+    "jsonpath-ng>=1.6.0",
+]
+# 全部安装（推荐）
+full = [
+    "curl_cffi>=0.5.0",
+    "fake-useragent>=1.4.0",
+    "playwright>=1.40.0",
+    "httpx[http2]>=0.27.0",
+    "anyio>=4.0.0",
+    "parsel>=1.9.0",
+    "jsonpath-ng>=1.6.0",
+]
+# Agent 编排（可选）
+agents = [
+    "crewai>=0.102.0",
+    "langchain-openai>=0.3.0",
+]
+# 开发依赖
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "unified_crawler_server", "setup_mcp_clients"]
+
+[tool.setuptools.packages.find]
+include = ["agents*", "config*", "utils*", "crawler_core*"]

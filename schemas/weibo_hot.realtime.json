@@ -1,0 +1,31 @@
+{
+  "columns": {
+    "captured_at": "TEXT",
+    "source_url": "TEXT",
+    "rank": "INTEGER",
+    "title": "TEXT",
+    "hot_index": "INTEGER",
+    "category": "TEXT",
+    "tag": "TEXT",
+    "url": "TEXT"
+  },
+  "required": [
+    "captured_at",
+    "rank",
+    "title",
+    "url"
+  ],
+  "unique": [
+    "captured_at",
+    "rank"
+  ],
+  "indexes": [
+    [
+      "title"
+    ],
+    [
+      "hot_index"
+    ]
+  ],
+  "strict": true
+}

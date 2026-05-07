@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "crawler": {
+      "command": "python",
+      "args": ["unified_crawler_server.py"],
+      "env": {
+        "PYTHONPATH": "."
+      }
+    },
+    "spider": {
+      "command": "python",
+      "args": ["unified_crawler_server.py"],
+      "env": {
+        "PYTHONPATH": "."
+      }
+    }
+  }
+}
