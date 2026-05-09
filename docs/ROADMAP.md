@@ -42,11 +42,26 @@ Crawpapa-Fetch is moving from a capable single-server MCP prototype toward a pro
 
 ### P5: Visualization Handoff
 
-- Add `prepare_visualization_payload` as a stable JSON handoff interface.
-- Support CSV, JSON, SQLite table, normalized records, and analysis-report inputs.
-- Infer visualization field roles: dimension, metric, label, metadata.
+- Keep `prepare_visualization_payload` as a stable JSON handoff interface.
+- Continue testing CSV, JSON, SQLite table, normalized records, and analysis-report inputs.
+- Refine visualization field-role inference: dimension, metric, label, metadata.
 - Suggest charts without rendering them inside the crawler core.
 - Keep optional rendering as a later second-stage tool.
+
+### P6: Target Memory
+
+- Persist higher-level target analysis memory beyond low-level domain access memory.
+- Remember menu sources, pagination hints, preferred modes, and analysis evidence.
+- Reuse target memory to reduce repeated inference on familiar sites and target families.
+- Keep the memory schema generic enough for non-crawler target analysis workflows.
+
+### P7: Practical Test Gaps
+
+- Add explicit availability reporting when requested counts cannot be fully met.
+- Add format-contract validation before collection starts.
+- Add clearer access-class reporting for SSR, JS shell, robots-gated, and challenge-gated pages.
+- Add better selector explanation for why a candidate won or lost.
+- Add safer API parse diagnostics for JSON/GraphQL endpoints that fail early.
 
 ## Non-Goals
 

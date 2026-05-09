@@ -73,3 +73,21 @@ probe_access_strategy -> observe_browser_network -> infer_pagination_strategy ->
 - 运行 `diagnose_crawler_setup`。
 - 运行 `python tools/maintenance/build_package.py` 或 `pack.bat`。
 - 确认 README 写明合规边界。
+
+## 2026-05-09 Practical Test Gaps
+
+The 10-site recon test exposed these maintenance priorities:
+
+- API targets need better parse diagnostics. A failed API test should distinguish JSON parse errors, robots denial, 403 responses, and truncated structured content.
+- Complex-page `0 hit` results should become diagnostic reports. The report should say whether the likely cause is a weak DOM selector, script-embedded data, truncation, robots, or challenge blocking.
+- Output format contracts should be checked before collection starts, especially conflicts such as requesting multi-sheet output while selecting CSV.
+- Sites such as `Indeed` and `Bilibili` show useful API hints, but the tool should explain why current selector candidates did not win.
+- Sites such as `Pinterest`, `m.weibo.cn`, and `ScrapingCourse Cloudflare` are useful boundary tests. The correct behavior is to report robots/challenge limits clearly, not to keep retrying as if normal collection were available.
+
+## Next Maintenance Targets
+
+- Add `availability_report` to unified analysis output.
+- Add `access_class` and `robots_explain` to site scouting output.
+- Standardize `0 hit` fallback diagnostics.
+- Move output-format conflict checks into the planning stage.
+- Continue improving target memory so repeated site analysis reuses previous evidence.
