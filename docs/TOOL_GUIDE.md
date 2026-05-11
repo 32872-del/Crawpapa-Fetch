@@ -134,6 +134,15 @@ Each matched source includes:
 - `filter_report`
 - optional tree/dict output
 
+The top-level `diff_summary` compares the recommended source with the other matched sources:
+
+- `recommended_title_coverage` and `recommended_url_coverage`
+- `only_in_recommended`
+- `missing_from_recommended`
+- `shared_titles`
+- per-source `title_overlap_ratio` and `url_overlap_ratio`
+- `warnings` when the recommended source misses many titles or URLs from other sources
+
 The recommendation favors sources with strong business-directory signals, usable URLs, useful depth, and low hidden/content/external noise.
 
 ## Detail Sampling

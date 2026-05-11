@@ -1065,6 +1065,12 @@ def test_compare_menu_sources_recommends_multibrand_main_menu():
     assert result["recommended"]["count"] == 3
     assert result["recommended"]["directory_profile"]["business_score"] > 0
     assert any("multiBrandMenu" in item for item in result["recommended"]["explanation"])
+    assert result["diff_summary"]["available"] is True
+    assert result["diff_summary"]["recommended_path"] == "navigation.multiBrandMenu[0].mainMenu"
+    assert result["diff_summary"]["compared_source_count"] == 1
+    assert result["diff_summary"]["by_source"][0]["path"] == "navigation.mainMenu"
+    assert "Women" in result["diff_summary"]["only_in_recommended"]
+    assert all("_directory_entries" not in item for item in result["comparisons"])
     assert len(result["comparisons"]) == 2
 
 

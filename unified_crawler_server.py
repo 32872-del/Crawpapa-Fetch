@@ -1006,6 +1006,112 @@ def _explain_menu_profile(path: str, profile: dict[str, Any], base_score: int) -
     reasons.append(f"base_score={base_score}, business_score={profile.get('business_score', 0)}")
     return reasons
 
+def _flatten_menu_entries(nodes: list[dict[str, Any]], max_entries: int = 500) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+
+    def visit(items: list[dict[str, Any]], trail: list[str]) -> None:
+        for node in items:
+            if len(entries) >= max_entries:
+                return
+            title = str(node.get("title") or node.get("name") or "").strip()
+            url_value = str(node.get("url") or "").strip()
+            next_trail = [*trail, title] if title else trail
+            if title or url_value:
+                entries.append({
+                    "title": title,
+                    "title_key": title.lower(),
+                    "url": url_value,
+                    "path": " > ".join(next_trail),
+                })
+            children = node.get("children", [])
+            if children:
+                visit(children, next_trail)
+
+    visit(nodes, [])
+    return entries
+
+def _sample_strings(values: set[str], limit: int = 12) -> list[str]:
+    return [value for value in sorted(values) if value][:limit]
+
+def _build_menu_diff_summary(recommended: dict[str, Any] | None,
+                             comparisons: list[dict[str, Any]]) -> dict[str, Any]:
+    if not recommended:
+        return {
+            "available": False,
+            "reason": "no_recommended_menu_source",
+        }
+    rec_entries = recommended.get("_directory_entries", [])
+    rec_titles = {item["title_key"] for item in rec_entries if item.get("title_key")}
+    rec_title_labels = {item["title"] for item in rec_entries if item.get("title")}
+    rec_urls = {item["url"] for item in rec_entries if item.get("url")}
+    matched = [item for item in comparisons if item.get("matched") and item is not recommended]
+    union_titles = set(rec_titles)
+    union_urls = set(rec_urls)
+    by_source = []
+    only_in_recommended_titles = set(rec_title_labels)
+    missing_from_recommended_titles: set[str] = set()
+    shared_title_labels: set[str] = set()
+
+    for item in matched:
+        entries = item.get("_directory_entries", [])
+        titles = {entry["title_key"] for entry in entries if entry.get("title_key")}
+        title_labels = {entry["title"] for entry in entries if entry.get("title")}
+        urls = {entry["url"] for entry in entries if entry.get("url")}
+        union_titles.update(titles)
+        union_urls.update(urls)
+        shared_titles = rec_titles & titles
+        shared_urls = rec_urls & urls
+        shared_title_labels.update(
+            entry["title"] for entry in rec_entries
+            if entry.get("title_key") in shared_titles and entry.get("title")
+        )
+        only_rec = {
+            entry["title"] for entry in rec_entries
+            if entry.get("title_key") in (rec_titles - titles) and entry.get("title")
+        }
+        missing_rec = {
+            entry["title"] for entry in entries
+            if entry.get("title_key") in (titles - rec_titles) and entry.get("title")
+        }
+        only_in_recommended_titles &= only_rec if by_source else only_rec
+        missing_from_recommended_titles.update(missing_rec)
+        by_source.append({
+            "path": item.get("path", ""),
+            "title_overlap_ratio": round(len(shared_titles) / max(len(titles), 1), 3) if titles else 0,
+            "url_overlap_ratio": round(len(shared_urls) / max(len(urls), 1), 3) if urls else 0,
+            "shared_title_count": len(shared_titles),
+            "shared_url_count": len(shared_urls),
+            "only_in_recommended_count": len(rec_titles - titles),
+            "missing_from_recommended_count": len(titles - rec_titles),
+            "only_in_recommended": _sample_strings(only_rec),
+            "missing_from_recommended": _sample_strings(missing_rec),
+            "shared_titles": _sample_strings(shared_title_labels),
+        })
+
+    recommended_title_coverage = round(len(rec_titles & union_titles) / max(len(union_titles), 1), 3) if union_titles else 0
+    recommended_url_coverage = round(len(rec_urls & union_urls) / max(len(union_urls), 1), 3) if union_urls else 0
+    warnings = []
+    if matched and recommended_title_coverage < 0.7:
+        warnings.append("recommended_source_does_not_cover_many_titles_from_other_sources")
+    if matched and recommended_url_coverage < 0.7:
+        warnings.append("recommended_source_does_not_cover_many_urls_from_other_sources")
+    return {
+        "available": True,
+        "recommended_path": recommended.get("path", ""),
+        "compared_source_count": len(matched),
+        "recommended_title_count": len(rec_titles),
+        "recommended_url_count": len(rec_urls),
+        "union_title_count": len(union_titles),
+        "union_url_count": len(union_urls),
+        "recommended_title_coverage": recommended_title_coverage,
+        "recommended_url_coverage": recommended_url_coverage,
+        "only_in_recommended": _sample_strings(only_in_recommended_titles),
+        "missing_from_recommended": _sample_strings(missing_from_recommended_titles),
+        "shared_titles": _sample_strings(shared_title_labels),
+        "by_source": by_source,
+        "warnings": warnings,
+    }
+
 def _normalize_url(url_value: str, base_url: str) -> str:
     raw = str(url_value or "").strip()
     if not raw:
@@ -4783,6 +4889,7 @@ def compare_menu_sources(html: str, base_url: str = "", paths: str = "",
                 "directory_profile": profile,
                 "score": base_score + min(tree["count"], 30) + profile["business_score"],
                 "explanation": _explain_menu_profile(path, profile, base_score),
+                "_directory_entries": _flatten_menu_entries(tree["items"]),
             }
             if output_format == "tree":
                 item["items"] = tree["items"]
@@ -4792,12 +4899,16 @@ def compare_menu_sources(html: str, base_url: str = "", paths: str = "",
 
         matched = [item for item in comparisons if item.get("matched")]
         recommended = max(matched, key=lambda item: item.get("score", 0), default=None)
+        diff_summary = _build_menu_diff_summary(recommended, comparisons)
+        for item in comparisons:
+            item.pop("_directory_entries", None)
         result = {
             "source_count": len(sources),
             "candidate_count": len(auto_candidates),
             "auto_candidates": auto_candidates[:20],
             "comparisons": comparisons,
             "recommended": recommended,
+            "diff_summary": diff_summary,
             "explanation": (
                 "优先选择同时包含 multiBrandMenu/mainMenu/navigation 信号、节点数量较多、过滤后仍有有效 URL 的菜单来源。"
                 if recommended else

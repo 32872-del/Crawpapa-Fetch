@@ -177,6 +177,9 @@ compare_menu_sources(
 - `recommended.directory_profile.valid_ratio`: 过滤噪声后的有效比例。
 - `recommended.directory_profile.signals`: 层级、目录 URL、低噪声等信号。
 - `recommended.explanation`: 为什么这个菜单源比其他候选更适合采集。
+- `diff_summary.only_in_recommended`: 推荐源独有的目录。
+- `diff_summary.missing_from_recommended`: 其他菜单源有、推荐源没有的目录。
+- `diff_summary.by_source[*].url_overlap_ratio`: 推荐源与某个候选源的 URL 重叠率。
 
 ## 6. 输出格式
 
