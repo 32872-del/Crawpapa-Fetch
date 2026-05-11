@@ -111,9 +111,30 @@ Example path:
 navigation.multiBrandMenu[0].mainMenu
 ```
 
+When `output_format` is `tree` or `dict`, the result also includes `directory_profile`:
+
+- `business_score`: practical confidence that the source is a real business/category directory
+- `max_depth` and `avg_depth`: whether the menu is hierarchical
+- `url_coverage`: how many retained nodes have usable URLs
+- `valid_ratio`: retained nodes compared with filtered/noisy nodes
+- `url_type_counts`: category, content, promotion, product, external, or missing URL classes
+- `signals`: short hints such as `hierarchical`, `category_url_dominant`, and `low_filter_noise`
+
 ### `compare_menu_sources`
 
 Compares multiple menu candidates and reports recommended source, differences, and filtering reasons.
+
+Use it when a site exposes several possible menu structures, such as desktop menus, mobile menus, `navigation.mainMenu`, and `navigation.multiBrandMenu[*].mainMenu`.
+
+Each matched source includes:
+
+- `directory_profile`
+- `score`
+- `explanation`
+- `filter_report`
+- optional tree/dict output
+
+The recommendation favors sources with strong business-directory signals, usable URLs, useful depth, and low hidden/content/external noise.
 
 ## Detail Sampling
 
@@ -155,11 +176,18 @@ Use it before production crawler implementation, especially for price, image, de
 
 Converts an `analyze_site_for_crawl` JSON report into a human-readable Markdown report.
 
-### Planned: `prepare_visualization_payload`
+### `prepare_visualization_payload`
 
-This planned tool will prepare a stable JSON payload for a future visualization MCP or dashboard.
+Prepares a stable JSON payload for a future visualization MCP, dashboard, or report renderer.
 
-It will focus on:
+Supported inputs:
+
+- CSV/JSON text via `records`
+- CSV/JSON files via `input_path`
+- SQLite tables via `db_name` and `table`
+- `analyze_site_for_crawl` output via `analysis_json`
+
+It emits:
 
 - dataset metadata
 - inferred schema
@@ -167,8 +195,43 @@ It will focus on:
 - missing and duplicate rates
 - suggested charts
 - records preview
+- contract validation and availability report
 
 See [Visualization Handoff Interface](VISUALIZATION_HANDOFF.md).
+
+### `validate_visualization_payload`
+
+Validates the visualization handoff contract and reports:
+
+- missing required top-level fields
+- schema field contract issues
+- role/type counts
+- chart readiness
+- whether the payload has records, metrics, dimensions, labels, and preview data
+
+### `target_memory_stats`
+
+Shows persistent target-analysis memory.
+
+Use it to inspect:
+
+- remembered target profiles
+- preferred sources and modes
+- menu source paths
+- list/pagination hints
+- evidence snapshots and analysis summaries
+
+### `target_memory_get`
+
+Reads one stored target profile by `target_name`, optional `source_url`, and optional `target_type`.
+
+### `target_memory_reset`
+
+Deletes one stored target profile by the same key fields.
+
+### `target_memory_stats`
+
+Shows the current target-memory inventory, grouped by target type.
 
 ### `normalize_job_records`
 

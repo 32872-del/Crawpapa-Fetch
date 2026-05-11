@@ -101,6 +101,7 @@ class CrawlerConfig:
     pin_dns: bool
     auto_mode_escalation: bool
     domain_memory_enabled: bool
+    target_memory_enabled: bool
     async_batch_default_concurrency: int
     max_domain_sessions: int
     max_browser_contexts: int
@@ -169,6 +170,7 @@ def load_config(project_root: Path, server_version: str, warn: LoggerFn | None =
         pin_dns=env_bool("CRAWLER_PIN_DNS", True),
         auto_mode_escalation=env_bool("CRAWLER_AUTO_MODE_ESCALATION", True),
         domain_memory_enabled=env_bool("CRAWLER_DOMAIN_MEMORY_ENABLED", True),
+        target_memory_enabled=env_bool("CRAWLER_TARGET_MEMORY_ENABLED", True),
         async_batch_default_concurrency=max(1, env_int("CRAWLER_BATCH_CONCURRENCY", 5, warn)),
         max_domain_sessions=max(1, env_int("CRAWLER_MAX_DOMAIN_SESSIONS", 64, warn)),
         max_browser_contexts=max(1, env_int("CRAWLER_MAX_BROWSER_CONTEXTS", 16, warn)),

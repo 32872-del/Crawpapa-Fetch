@@ -10,13 +10,14 @@ It is designed for:
 - Crawl plan drafting, validation, and export.
 - Site type detection, field quality scoring, Markdown reports, and recommended schemas.
 - Structured data quality checks such as job record normalization and quality grading.
+- Visualization handoff payloads for downstream dashboards, reporting tools, or another MCP.
 
 Crawpapa-Fetch is not a CAPTCHA cracker, account bypass tool, or stealth abuse framework. It is intended for lawful analysis of public pages and authorized data sources.
 
 ## Status
 
-- Current version: `5.4.0`
-- Test baseline: `107 passed, 1 skipped`
+- Current version: `5.4.2`
+- Test baseline: `111 passed, 1 skipped`
 - Primary MCP server: `unified_crawler_server.py`
 - Package name: `crawpapa-fetch`
 - CLI commands:
@@ -93,6 +94,11 @@ Data quality:
 - `detect_site_type`
 - `field_quality_report`
 - `generate_site_report`
+- `prepare_visualization_payload`
+- `validate_visualization_payload`
+- `target_memory_stats`
+- `target_memory_get`
+- `target_memory_reset`
 - `normalize_job_records`
 - `save_data`
 - `save_to_db`

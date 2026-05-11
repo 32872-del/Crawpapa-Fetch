@@ -13,6 +13,7 @@ from crawler_core import dns_pin
 from crawler_core import parsing
 from crawler_core import security
 from crawler_core.domain_memory import DomainMemory
+from crawler_core.target_memory import TargetMemory
 from crawler_core.async_http import AsyncBackend, HAS_HTTPX
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "parsing",
     "security",
     "DomainMemory",
+    "TargetMemory",
     "AsyncBackend",
     "HAS_HTTPX",
 ]

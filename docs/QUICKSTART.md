@@ -169,6 +169,15 @@ compare_menu_sources(
 )
 ```
 
+目录分析时重点看：
+
+- `recommended.path`: 推荐使用的菜单源。
+- `recommended.directory_profile.business_score`: 业务目录评分。
+- `recommended.directory_profile.url_coverage`: 有效 URL 覆盖率。
+- `recommended.directory_profile.valid_ratio`: 过滤噪声后的有效比例。
+- `recommended.directory_profile.signals`: 层级、目录 URL、低噪声等信号。
+- `recommended.explanation`: 为什么这个菜单源比其他候选更适合采集。
+
 ## 6. 输出格式
 
 `collection_plan.output_format` 支持：

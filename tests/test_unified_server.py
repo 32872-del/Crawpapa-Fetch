@@ -873,6 +873,81 @@ def test_detect_site_type_and_generate_markdown_report():
     assert "Recommended Schema" in report
 
 
+def test_prepare_visualization_payload_from_csv_records():
+    csv_text = "category,title,heat,release_date,url\nHot,A,100,2026-05-07,https://example.test/a\nHot,B,80,2026-05-08,https://example.test/b\n"
+
+    result = json.loads(server.prepare_visualization_payload(
+        records=csv_text,
+        input_format="csv",
+        dataset_name="hot_search",
+        source_url="https://example.test",
+    ))
+
+    assert result["ok"] is True
+    assert result["dataset"]["name"] == "hot_search"
+    assert result["dataset"]["records_count"] == 2
+    fields = {item["name"]: item for item in result["schema"]["fields"]}
+    assert fields["category"]["role"] == "dimension"
+    assert fields["heat"]["role"] == "metric"
+    assert fields["url"]["role"] == "metadata"
+    assert any(chart["type"] == "bar" for chart in result["suggested_charts"])
+    assert result["contract_report"]["status"] == "ok"
+
+
+def test_prepare_visualization_payload_from_sqlite_table():
+    db_name = f"visualization_{int(time.time() * 1000)}"
+    rows = [
+        {"url": "https://example.test/1", "title": "Helmet A", "price": 219.9, "category": "helmet"},
+        {"url": "https://example.test/2", "title": "Helmet B", "price": 299.0, "category": "helmet"},
+    ]
+    server.save_batch_to_db(json.dumps(rows), db_name=db_name, table="items")
+
+    result = json.loads(server.prepare_visualization_payload(
+        db_name=db_name,
+        table="items",
+        dataset_name="helmet_prices",
+        limit=10,
+    ))
+
+    assert result["ok"] is True
+    assert result["dataset"]["source_type"] == "sqlite"
+    assert result["dataset"]["records_count_total"] == 2
+    assert result["dataset"]["records_loaded"] == 2
+    fields = {item["name"]: item for item in result["schema"]["fields"]}
+    assert fields["price"]["role"] == "metric"
+    assert result["quality"]["duplicate_rate"] == 0
+
+
+def test_prepare_visualization_payload_uses_analysis_samples_without_records():
+    analysis = {
+        "url": "https://example.test/products",
+        "goal": "product list",
+        "summary": {"best_mode": "requests"},
+        "site_profile": {"site_type": "ecommerce", "page_type": "product_list"},
+        "field_quality": {"overall_grade": "B"},
+        "detail_samples": {
+            "samples": [
+                {"values": {"title": "Product A", "price": "$19.99", "image_src": "https://example.test/a.jpg"}},
+            ]
+        },
+    }
+
+    result = json.loads(server.prepare_visualization_payload(analysis_json=json.dumps(analysis)))
+
+    assert result["ok"] is True
+    assert result["dataset"]["source_type"] == "analysis_report"
+    assert result["analysis_context"]["site_type"] == "ecommerce"
+    assert result["records_preview"][0]["title"] == "Product A"
+
+
+def test_validate_visualization_payload_reports_contract_mismatch():
+    result = json.loads(server.validate_visualization_payload(json.dumps({"version": "1.0"})))
+
+    assert result["ok"] is False
+    assert result["status"] == "fail"
+    assert any(issue["severity"] == "error" for issue in result["issues"])
+
+
 def test_infer_site_selectors_returns_ranked_candidates():
     with _local_site() as site:
         result = json.loads(server.infer_site_selectors(
@@ -962,6 +1037,9 @@ def test_extract_initial_state_reads_multibrand_menu_with_filter_report():
     assert result["filter_report"]["contentPage"] == 1
     assert result["filter_report"]["externalLink"] == 1
     assert result["filter_report"]["duplicate"] == 1
+    assert result["directory_profile"]["max_depth"] == 2
+    assert result["directory_profile"]["url_coverage"] == 1.0
+    assert "hierarchical" in result["directory_profile"]["signals"]
 
 
 def test_compare_menu_sources_recommends_multibrand_main_menu():
@@ -985,6 +1063,8 @@ def test_compare_menu_sources_recommends_multibrand_main_menu():
 
     assert result["recommended"]["path"] == "navigation.multiBrandMenu[0].mainMenu"
     assert result["recommended"]["count"] == 3
+    assert result["recommended"]["directory_profile"]["business_score"] > 0
+    assert any("multiBrandMenu" in item for item in result["recommended"]["explanation"])
     assert len(result["comparisons"]) == 2
 
 

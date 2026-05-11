@@ -1,6 +1,6 @@
 # Visualization Handoff Interface
 
-This document defines the planned interface between Crawpapa-Fetch and a future visualization MCP, dashboard, or reporting layer.
+This document defines the interface between Crawpapa-Fetch and a future visualization MCP, dashboard, or reporting layer.
 
 ## Design Position
 
@@ -25,25 +25,36 @@ Visualization MCP / Dashboard
 
 This keeps project boundaries clear while preserving a clean integration path.
 
-## Planned Tool
+## Available Tools
 
 ```text
 prepare_visualization_payload(
   records="",
   input_path="",
+  input_format="auto",
   db_name="",
   table="",
+  where="",
+  limit=5000,
   dataset_name="",
   source_url="",
-  analysis_json=""
+  analysis_json="",
+  preview_limit=20,
+  output_name=""
 )
 ```
 
 The tool should not render charts. It prepares a stable JSON payload for another MCP, a dashboard, or a later renderer.
 
+```text
+validate_visualization_payload(payload_json="")
+```
+
+The validator checks the handoff contract and returns availability flags for downstream consumers.
+
 ## Supported Inputs
 
-Planned input sources:
+Supported input sources:
 
 - CSV file
 - JSON file
@@ -61,6 +72,7 @@ Planned input sources:
   "dataset": {
     "name": "qq_music_new_albums",
     "source": "https://y.qq.com/",
+    "source_type": "sqlite",
     "generated_at": "2026-05-07T17:06:40+08:00",
     "records_count": 488
   },
@@ -116,9 +128,22 @@ Planned input sources:
   "handoff": {
     "preferred_consumer": "visualization_mcp",
     "format": "json",
+    "contract": "crawpapa.visualization_payload.v1",
     "notes": [
       "Suitable for category and time-series charts."
     ]
+  },
+  "contract_report": {
+    "status": "ok",
+    "availability": {
+      "has_records": true,
+      "has_schema": true,
+      "has_metrics": false,
+      "has_dimensions": true,
+      "has_labels": true,
+      "has_preview": true,
+      "chart_count": 2
+    }
   }
 }
 ```
@@ -154,7 +179,7 @@ Initial chart recommendations:
 - `recommended_schema`
 - `markdown_report`
 
-`prepare_visualization_payload` should reuse those fields when `analysis_json` is provided.
+`prepare_visualization_payload` reuses those fields when `analysis_json` is provided. If no records are provided, it can still build a schema/context payload from detail samples in the analysis report.
 
 ## Future Optional Renderer
 
@@ -166,11 +191,10 @@ render_visualization_report(payload, output="html")
 
 The renderer should consume the same payload. That keeps the handoff interface stable whether visualization is external or built in.
 
-## Implementation Priority
+## Implementation Status
 
-Recommended order:
+- Implemented `prepare_visualization_payload`.
+- Implemented `validate_visualization_payload`.
+- Added tests for CSV records, SQLite tables, analysis-report samples, and contract mismatches.
 
-1. Implement `prepare_visualization_payload`.
-2. Add tests for CSV, JSON, SQLite, and analysis-report inputs.
-3. Add chart suggestion tests.
-4. Add `render_visualization_report` only after the payload contract is stable.
+Next recommended step: add `render_visualization_report` only after downstream visualization consumers have used the payload contract in practice.

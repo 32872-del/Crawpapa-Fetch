@@ -1,5 +1,5 @@
 """
-Crawpapa-Fetch v5.4 - Agent-oriented crawler analysis MCP service
+Crawpapa-Fetch v5.4.2 - Agent-oriented crawler analysis MCP service
 
 v5.0 主链：
 - scout_page -> draft_collection_plan -> validate_collection_plan -> execute_collection_plan
@@ -48,7 +48,7 @@ import random
 import contextlib
 import uuid
 import html as html_lib
-from collections import OrderedDict, deque
+from collections import OrderedDict, defaultdict, deque
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, parse_qsl
 from concurrent.futures import ThreadPoolExecutor
@@ -95,10 +95,16 @@ from crawler_core import challenge as _challenge_mod
 from crawler_core import dns_pin as _dns_pin_mod
 from crawler_core import parsing as _parsing_mod
 from crawler_core.domain_memory import DomainMemory
+from crawler_core.target_memory import TargetMemory
 from crawler_core.async_http import AsyncBackend, HAS_HTTPX
 from crawler_core.job_normalization import (
     load_records as _load_job_records,
     normalize_job_records as _normalize_job_records,
+)
+from crawler_core.visualization import (
+    build_visualization_payload as _build_visualization_payload,
+    load_records as _load_visualization_records,
+    validate_visualization_payload as _validate_visualization_payload,
 )
 
 try:
@@ -156,7 +162,7 @@ except ImportError:
 # ============ 配置 ============
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-SERVER_VERSION = "5.4.0"
+SERVER_VERSION = "5.4.2"
 SERVER_PROTOCOL_VERSION = ".".join(SERVER_VERSION.split(".")[:2])
 
 CONFIG = load_config(PROJECT_ROOT, SERVER_VERSION, warn=logger.warning)
@@ -197,6 +203,7 @@ DETECT_CHALLENGE_PAGES = CONFIG.detect_challenge_pages
 PIN_DNS = CONFIG.pin_dns
 AUTO_MODE_ESCALATION = CONFIG.auto_mode_escalation
 DOMAIN_MEMORY_ENABLED = CONFIG.domain_memory_enabled
+TARGET_MEMORY_ENABLED = CONFIG.target_memory_enabled
 ASYNC_BATCH_DEFAULT_CONCURRENCY = CONFIG.async_batch_default_concurrency
 MAX_DOMAIN_SESSIONS = CONFIG.max_domain_sessions
 MAX_BROWSER_CONTEXTS = CONFIG.max_browser_contexts
@@ -603,6 +610,7 @@ _cookie_store = CookieStore(COOKIE_DIR)
 
 # v4.0: 域名记忆 + 异步并发后端
 _domain_memory = DomainMemory(DB_DIR / "domain_memory.db") if DOMAIN_MEMORY_ENABLED else None
+_target_memory = TargetMemory(DB_DIR / "target_memory.db") if TARGET_MEMORY_ENABLED else None
 _async_backend = AsyncBackend(
     timeout=REQUEST_TIMEOUT,
     max_connections=max(20, MAX_DOMAIN_SESSIONS * 2),
@@ -876,6 +884,127 @@ def _score_menu_source(path: str, value) -> int:
     elif isinstance(value, dict):
         score += min(len(value), 10)
     return score
+
+def _classify_menu_url(url_value: str, base_url: str = "") -> str:
+    if not url_value:
+        return "missing"
+    parsed = urlparse(url_value)
+    base = urlparse(base_url) if base_url else None
+    if parsed.scheme in {"mailto", "tel"}:
+        return "contact"
+    if base and parsed.netloc and base.netloc and parsed.netloc != base.netloc:
+        return "external"
+    path = parsed.path.lower()
+    target = f"{path}?{parsed.query.lower()}" if parsed.query else path
+    if re.search(r"(\.html$|/p/|/product/|/products/|sku=|pid=)", target):
+        return "product"
+    if re.search(r"(/blog/|/news/|/article/|/magazine/|/inspiration/|/advies/)", target):
+        return "content"
+    if re.search(r"(/sale|/deals|/offers|/aanbiedingen|/actie)", target):
+        return "promotion"
+    return "category"
+
+def _profile_menu_tree(tree: dict[str, Any], base_url: str = "") -> dict[str, Any]:
+    items = tree.get("items", [])
+    urls: list[str] = []
+    depths: list[int] = []
+    labels: list[str] = []
+    type_counts: dict[str, int] = defaultdict(int)
+
+    def visit(nodes: list[dict[str, Any]], depth: int) -> None:
+        for node in nodes:
+            title = str(node.get("title") or node.get("name") or "").strip()
+            url_value = str(node.get("url") or "").strip()
+            if title:
+                labels.append(title)
+            if url_value:
+                urls.append(url_value)
+                type_counts[_classify_menu_url(url_value, base_url)] += 1
+            children = node.get("children", [])
+            if children:
+                depths.append(depth)
+                visit(children, depth + 1)
+            else:
+                depths.append(depth)
+
+    visit(items, 1)
+    count = int(tree.get("count") or 0)
+    top_count = len(items)
+    unique_urls = len(set(urls))
+    duplicate_urls = max(len(urls) - unique_urls, 0)
+    filter_report = tree.get("filter_report", {}) or {}
+    filtered_total = sum(int(value or 0) for value in filter_report.values())
+    max_depth = max(depths, default=0)
+    avg_depth = round(sum(depths) / len(depths), 2) if depths else 0
+    valid_ratio = round(count / (count + filtered_total), 3) if count + filtered_total else 0
+    url_coverage = round(unique_urls / count, 3) if count else 0
+    category_ratio = round(type_counts.get("category", 0) / max(unique_urls, 1), 3) if unique_urls else 0
+    business_score = max(0, min(100, int(
+        min(count, 60)
+        + min(top_count * 3, 18)
+        + min(max_depth * 8, 24)
+        + int(valid_ratio * 20)
+        + int(url_coverage * 15)
+        + int(category_ratio * 15)
+        - min(filtered_total * 2, 30)
+        - min(duplicate_urls * 3, 24)
+        - min(type_counts.get("content", 0) * 2, 20)
+        - min(type_counts.get("external", 0) * 3, 24)
+    )))
+    signals = []
+    if max_depth >= 2:
+        signals.append("hierarchical")
+    if category_ratio >= 0.6:
+        signals.append("category_url_dominant")
+    if valid_ratio >= 0.8:
+        signals.append("low_filter_noise")
+    if url_coverage >= 0.7:
+        signals.append("high_url_coverage")
+    if type_counts.get("content", 0):
+        signals.append("mixed_content_links")
+    if type_counts.get("external", 0):
+        signals.append("external_links_present")
+    if filtered_total:
+        signals.append("filtered_nodes_present")
+    return {
+        "node_count": count,
+        "top_count": top_count,
+        "max_depth": max_depth,
+        "avg_depth": avg_depth,
+        "url_count": len(urls),
+        "unique_url_count": unique_urls,
+        "duplicate_url_count": duplicate_urls,
+        "url_coverage": url_coverage,
+        "valid_ratio": valid_ratio,
+        "filtered_total": filtered_total,
+        "url_type_counts": dict(sorted(type_counts.items())),
+        "category_ratio": category_ratio,
+        "business_score": business_score,
+        "signals": signals,
+        "label_samples": labels[:12],
+    }
+
+def _explain_menu_profile(path: str, profile: dict[str, Any], base_score: int) -> list[str]:
+    reasons = []
+    lowered = path.lower()
+    if "multibrandmenu" in lowered:
+        reasons.append("path contains multiBrandMenu, often used for real ecommerce navigation")
+    if "mainmenu" in lowered:
+        reasons.append("path contains mainMenu")
+    if "navigation" in lowered:
+        reasons.append("path sits under navigation state")
+    if profile.get("max_depth", 0) >= 2:
+        reasons.append("tree has nested category levels")
+    if profile.get("category_ratio", 0) >= 0.6:
+        reasons.append("most URLs look like category/navigation URLs")
+    if profile.get("url_coverage", 0) >= 0.7:
+        reasons.append("most retained nodes have usable URLs")
+    if profile.get("filtered_total", 0):
+        reasons.append(f"{profile['filtered_total']} hidden/content/external/duplicate nodes were filtered")
+    if profile.get("url_type_counts", {}).get("content", 0):
+        reasons.append("contains content-like URLs, so it may mix commerce navigation with editorial links")
+    reasons.append(f"base_score={base_score}, business_score={profile.get('business_score', 0)}")
+    return reasons
 
 def _normalize_url(url_value: str, base_url: str) -> str:
     raw = str(url_value or "").strip()
@@ -4150,6 +4279,66 @@ def _record_domain_failure(domain: str, mode: str, challenge_hit: str) -> None:
     except Exception as exc:
         logger.warning(f"domain_memory.record_failure 失败: {exc}", exc_info=True)
 
+def _target_memory_key(target_name: str, source_url: str = "", target_type: str = "") -> str:
+    return TargetMemory.make_key(target_name, source_url=source_url, target_type=target_type)
+
+def _target_memory_supported() -> bool:
+    return bool(_target_memory and TARGET_MEMORY_ENABLED)
+
+def _collect_target_memory_payload(analysis: dict[str, Any], target_type: str = "", target_name: str = "", source_url: str = "") -> tuple[str, dict[str, Any]]:
+    merged = dict(analysis)
+    if isinstance(merged.get("data"), dict):
+        merged = {**merged, **merged["data"]}
+    target_name = target_name or str(merged.get("goal") or merged.get("site_profile", {}).get("site_type") or merged.get("url") or "target")
+    source_url = source_url or str(merged.get("url") or "")
+    target_type = target_type or str((merged.get("site_profile") or {}).get("site_type") or merged.get("goal") or "general")
+    key = _target_memory_key(target_name, source_url=source_url, target_type=target_type)
+    plan_obj = (merged.get("plan") or {}).get("plan") if isinstance(merged.get("plan"), dict) and isinstance((merged.get("plan") or {}).get("plan"), dict) else merged.get("plan") or {}
+    pagination_obj = merged.get("pagination") or {}
+    detail_samples = (merged.get("detail_samples") or {}).get("samples") or []
+    payload = {
+        "target_type": target_type,
+        "target_name": target_name,
+        "source_url": source_url,
+        "preferred_source": str((merged.get("summary") or {}).get("best_mode") or (merged.get("scout") or {}).get("recommended_plan", {}).get("mode") or ""),
+        "preferred_mode": str((merged.get("summary") or {}).get("best_mode") or plan_obj.get("mode") or ""),
+        "menu_source_path": str(plan_obj.get("menu_source_path") or ""),
+        "list_selector": str((merged.get("summary") or {}).get("list_selector") or plan_obj.get("list_selector") or ""),
+        "pagination_type": str((pagination_obj.get("recommended") or {}).get("type") or (pagination_obj.get("data") or {}).get("recommended", {}).get("type") if isinstance(pagination_obj.get("data"), dict) else ""),
+        "detail_selector_text": json.dumps(plan_obj.get("fields") or {}, ensure_ascii=False, sort_keys=True),
+        "field_hints": {
+            "detail_fields": plan_obj.get("fields") or {},
+            "menu_source_path": plan_obj.get("menu_source_path") or "",
+            "category_urls": (plan_obj.get("category_urls") or [])[:20],
+            "sample_next_urls": (pagination_obj.get("sample_next_urls") or [])[:10],
+            "sampled_detail_count": len(detail_samples),
+        },
+        "evidence": {
+            "access_findings": (merged.get("access") or {}).get("findings", []),
+            "menu_candidates": (merged.get("scout") or {}).get("menu_candidates", [])[:5],
+            "link_candidates": (merged.get("scout") or {}).get("link_candidates", [])[:5],
+            "sample_next_urls": (pagination_obj.get("sample_next_urls") or [])[:10],
+            "risk_flags": (merged.get("detail_samples") or {}).get("risk_flags", []),
+        },
+        "analysis": {
+            "summary": merged.get("summary", {}),
+            "site_profile": merged.get("site_profile", {}),
+            "field_quality": merged.get("field_quality", {}),
+            "recommended_schema": merged.get("recommended_schema", {}),
+            "implementation_hints": merged.get("implementation_hints", {}),
+            "plan": plan_obj,
+        },
+        "confidence": float((merged.get("summary") or {}).get("best_mode_confidence") or (merged.get("field_quality") or {}).get("overall_score") or 0),
+    }
+    return key, payload
+
+def _record_target_memory_from_analysis(analysis: dict[str, Any], target_type: str = "", target_name: str = "", source_url: str = "") -> dict[str, Any]:
+    if not _target_memory_supported():
+        return {"ok": False, "error": "target_memory disabled"}
+    key, payload = _collect_target_memory_payload(analysis, target_type=target_type, target_name=target_name, source_url=source_url)
+    record = _target_memory.record_analysis(key, payload)
+    return {"ok": True, "target_key": key, "record": record}
+
 
 def _fetch_full_text(url: str, mode: str = "auto", use_cache: bool = True,
                      allow_private: bool = False) -> str:
@@ -4529,12 +4718,14 @@ def extract_initial_state(html: str, path: str = "", base_url: str = "",
         if output_format == "tree":
             tree = _menu_to_tree(value, base_url=base_url, max_depth=max_depth, include_filtered=include_filtered)
             result.update(tree)
+            result["directory_profile"] = _profile_menu_tree(tree, base_url=base_url)
         elif output_format == "dict":
             tree = _menu_to_tree(value, base_url=base_url, max_depth=max_depth, include_filtered=include_filtered)
             result["items"] = _tree_to_title_dict(tree["items"])
             result["count"] = tree["count"]
             result["filter_report"] = tree["filter_report"]
             result["filtered_samples"] = tree["filtered_samples"]
+            result["directory_profile"] = _profile_menu_tree(tree, base_url=base_url)
         else:
             result["value"] = value
         return _success_result(result)
@@ -4578,6 +4769,8 @@ def compare_menu_sources(html: str, base_url: str = "", paths: str = "",
                 comparisons.append({"path": path, "matched": False, "reason": "path_not_found"})
                 continue
             tree = _menu_to_tree(resolved["value"], base_url=base_url, max_depth=max_depth)
+            profile = _profile_menu_tree(tree, base_url=base_url)
+            base_score = _score_menu_source(path, resolved["value"])
             item = {
                 "path": path,
                 "matched": True,
@@ -4587,7 +4780,9 @@ def compare_menu_sources(html: str, base_url: str = "", paths: str = "",
                 "top_count": len(tree["items"]),
                 "filter_report": tree["filter_report"],
                 "filtered_samples": tree["filtered_samples"],
-                "score": _score_menu_source(path, resolved["value"]) + min(tree["count"], 30),
+                "directory_profile": profile,
+                "score": base_score + min(tree["count"], 30) + profile["business_score"],
+                "explanation": _explain_menu_profile(path, profile, base_score),
             }
             if output_format == "tree":
                 item["items"] = tree["items"]
@@ -5380,6 +5575,124 @@ def query_db(db_name: str = "crawler_data", table: str = "products",
     except Exception as e:
         return _error_result(str(e), "query_failed")
 
+def _query_db_rows_for_handoff(db_name: str, table: str, limit: int, where: str = "") -> tuple[int, list[dict[str, Any]]]:
+    _validate_identifier(db_name, "鏁版嵁搴撳悕")
+    _validate_identifier(table, "琛ㄥ悕")
+    db_path = DB_DIR / f"{db_name}.db"
+    if not db_path.exists():
+        raise FileNotFoundError(f"database not found: {db_name}")
+    with _db_pool.connection(db_path, row_factory=sqlite3.Row) as conn:
+        cursor = conn.cursor()
+        table_sql = _quote_identifier(table)
+        allowed_columns = _get_table_columns(cursor, table)
+        where_clause, where_params = _build_where_clause(where, allowed_columns)
+        cursor.execute(f'SELECT COUNT(*) FROM {table_sql} {where_clause}', where_params)
+        total = int(cursor.fetchone()[0])
+        cursor.execute(f'SELECT * FROM {table_sql} {where_clause} LIMIT ? OFFSET ?',
+                       [*where_params, max(0, int(limit or 0)), 0])
+        rows = [dict(row) for row in cursor.fetchall()]
+    return total, rows
+
+@mcp.tool()
+def prepare_visualization_payload(records: str = "", input_path: str = "",
+                                  input_format: str = "auto",
+                                  db_name: str = "", table: str = "",
+                                  where: str = "", limit: int = 5000,
+                                  dataset_name: str = "", source_url: str = "",
+                                  analysis_json: str = "",
+                                  preview_limit: int = 20,
+                                  output_name: str = "") -> str:
+    """
+    Prepare a stable JSON payload for a future visualization MCP, dashboard, or
+    reporting layer. Supports CSV/JSON text, local CSV/JSON files, SQLite tables,
+    and analyze_site_for_crawl output as lineage/context.
+    """
+    try:
+        analysis = _json_obj(analysis_json, {}) if analysis_json else {}
+        source_type = "records"
+        loaded_records: list[dict[str, Any]] = []
+        total_records: int | None = None
+
+        if db_name and table:
+            total_records, loaded_records = _query_db_rows_for_handoff(db_name, table, limit=limit, where=where)
+            source_type = "sqlite"
+        elif records or input_path:
+            loaded_records = _load_visualization_records(records=records, input_path=input_path, input_format=input_format)
+            total_records = len(loaded_records)
+            source_type = "file" if input_path else "records"
+        elif analysis:
+            source_type = "analysis_report"
+            samples = ((analysis.get("detail_samples") or {}).get("samples") or [])
+            for sample in samples:
+                if isinstance(sample, dict) and isinstance(sample.get("values"), dict):
+                    loaded_records.append(sample["values"])
+            total_records = len(loaded_records)
+
+        payload = _build_visualization_payload(
+            loaded_records,
+            dataset_name=dataset_name,
+            source_url=source_url,
+            analysis=analysis,
+            source_type=source_type,
+            preview_limit=preview_limit,
+        )
+        if total_records is not None:
+            payload["dataset"]["records_count_total"] = total_records
+            payload["dataset"]["records_loaded"] = len(loaded_records)
+            if total_records > len(loaded_records):
+                payload["handoff"]["notes"].append(
+                    f"Payload loaded {len(loaded_records)} of {total_records} records; increase limit for a fuller handoff."
+                )
+                payload["contract_report"] = _validate_visualization_payload(payload)
+
+        if output_name:
+            raw_path = Path(output_name)
+            if raw_path.is_absolute() or raw_path.name != output_name:
+                return _error_result("output_name must be a simple filename under output/", "invalid_filename")
+            safe_name = raw_path.name
+            if not re.match(r"^[a-zA-Z0-9._-]+$", safe_name):
+                return _error_result("output_name contains unsafe characters", "invalid_filename")
+            out_path = OUTPUT_DIR / safe_name
+            out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            payload["artifact"] = {"path": str(out_path), "format": "json"}
+
+        return _success_result(_v5_envelope(
+            payload["contract_report"]["status"] != "fail",
+            data=payload,
+            diagnostics={"contract_report": payload["contract_report"]},
+            recommendations=[{
+                "type": "visualization_handoff",
+                "reason": "Pass this payload to a visualization MCP, dashboard, or report renderer.",
+                "confidence": 0.9 if payload["schema"]["fields"] else 0.55,
+            }],
+            **payload,
+        ))
+    except Exception as e:
+        return _error_result(str(e), "visualization_payload_failed")
+
+@mcp.tool()
+def validate_visualization_payload(payload_json: str) -> str:
+    """
+    Validate a Crawpapa-Fetch visualization handoff payload and report missing
+    contract fields, available roles, and chart readiness.
+    """
+    try:
+        payload = _json_obj(payload_json, {})
+        report = _validate_visualization_payload(payload)
+        return _success_result(_v5_envelope(
+            report["status"] != "fail",
+            data=report,
+            diagnostics={},
+            recommendations=[{
+                "type": "visualization_contract",
+                "reason": "Fix error-level issues before sending the payload to another consumer.",
+                "confidence": 0.86,
+            }],
+            **report,
+        ))
+    except Exception as e:
+        return _error_result(str(e), "visualization_payload_validation_failed")
+
 @mcp.tool()
 def export_db(db_name: str = "crawler_data", table: str = "products",
               format: str = "csv", where: str = "") -> str:
@@ -6129,6 +6442,48 @@ def domain_memory_reset(domain: str = "") -> str:
         return _success_result({"removed": "all"})
     except Exception as exc:
         return _error_result(str(exc), "domain_memory_reset_failed")
+
+
+@mcp.tool()
+def target_memory_stats(limit: int = 50) -> str:
+    """查看目标画像记忆，适合分析和规划复用。"""
+    try:
+        if not _target_memory_supported():
+            return _error_result("target_memory 未启用", "feature_disabled")
+        return _success_result({
+            "stats": _target_memory.stats(),
+            "records": _target_memory.list_records(limit=limit),
+        })
+    except Exception as exc:
+        return _error_result(str(exc), "target_memory_stats_failed")
+
+
+@mcp.tool()
+def target_memory_get(target_name: str, source_url: str = "", target_type: str = "") -> str:
+    """读取单个目标画像。"""
+    try:
+        if not _target_memory_supported():
+            return _error_result("target_memory 未启用", "feature_disabled")
+        key = _target_memory_key(target_name, source_url=source_url, target_type=target_type)
+        record = _target_memory.lookup(key)
+        if not record:
+            return _error_result("target not found", "not_found")
+        return _success_result({"target_key": key, "record": record})
+    except Exception as exc:
+        return _error_result(str(exc), "target_memory_get_failed")
+
+
+@mcp.tool()
+def target_memory_reset(target_name: str, source_url: str = "", target_type: str = "") -> str:
+    """清除单个目标画像。"""
+    try:
+        if not _target_memory_supported():
+            return _error_result("target_memory 未启用", "feature_disabled")
+        key = _target_memory_key(target_name, source_url=source_url, target_type=target_type)
+        removed = 1 if _target_memory.reset(key) else 0
+        return _success_result({"removed": removed, "target_key": key})
+    except Exception as exc:
+        return _error_result(str(exc), "target_memory_reset_failed")
 
 
 @mcp.tool()
@@ -7113,6 +7468,15 @@ def analyze_site_for_crawl(url: str,
             "page_type": report["site_profile"].get("page_type"),
             "field_quality_grade": report["field_quality"].get("overall_grade"),
         }
+        if _target_memory_supported():
+            target_memory_result = _record_target_memory_from_analysis(
+                report,
+                target_type=report["site_profile"].get("site_type", "") or goal or "general",
+                target_name=report["site_profile"].get("site_type", "") or urlparse(url).netloc or "target",
+                source_url=url,
+            )
+            report["target_memory"] = target_memory_result
+            report["implementation_hints"]["target_memory_key"] = target_memory_result.get("target_key", "")
         recommendations = _build_site_analysis_recommendations(report)
         markdown_report = _generate_site_markdown_report(report)
         report["markdown_report"] = markdown_report
@@ -7524,6 +7888,8 @@ def get_crawl_status() -> str:
             "pipeline_dsl": True,
             "template_crawling": True,
             "cookie_persistence": PERSIST_COOKIES,
+            "domain_memory": bool(_domain_memory),
+            "target_memory": bool(_target_memory),
         },
         "tools_count": tool_count,
         "warnings": warnings,
@@ -7592,6 +7958,16 @@ def get_crawl_status() -> str:
             "directory": str(COOKIE_DIR),
             "persistence_enabled": PERSIST_COOKIES,
             "profiles_count": len(_cookie_store.list_profiles()),
+        },
+        "memory": {
+            "domain_memory": {
+                "enabled": bool(_domain_memory),
+                "path": str(_domain_memory.db_path) if _domain_memory else "",
+            },
+            "target_memory": {
+                "enabled": bool(_target_memory),
+                "path": str(_target_memory.db_path) if _target_memory else "",
+            },
         },
         "databases": {
             "count": db_count,

@@ -37,6 +37,8 @@ Crawpapa-Fetch/
 - `crawler_core/`
   - Stable modules for fetching, parsing, diagnostics, frontier, templates, security, and site specs.
   - Put reusable business logic here when it is part of the MCP product.
+  - Keep downstream handoff contracts here too, such as `visualization.py`, so MCP tools remain thin adapters.
+  - Keep persistent analysis memory here too, such as `target_memory.py`, when the capability is shared by multiple MCP tools.
 
 - `agents/`
   - Agent-side orchestration and integration experiments.
