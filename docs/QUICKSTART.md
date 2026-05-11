@@ -96,6 +96,16 @@ validate_collection_plan(plan, sample=true)
 
 如果你只是让 LLM 写正式采集代码，可以停在 `validate_collection_plan`，把输出里的 selector、API 线索、risk flags 和 recommendations 交给采集框架。
 
+For ecommerce sites, check sitemap and detail-page paths early:
+
+```text
+infer_category_tree(url)
+parse_sitemap(product_sitemap_url)
+analyze_detail_samples(product_detail_or_category_url)
+```
+
+If product sitemap coverage is strong and detail pages expose Product JSON-LD, Open Graph product meta, or platform variant config, prefer a sitemap-to-detail crawler over fragile list-page selectors.
+
 ## 3. 访问策略探测
 
 ```text

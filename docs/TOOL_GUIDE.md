@@ -156,6 +156,34 @@ Identifies:
 - offset/cursor hints
 - sample next-page URLs
 
+## Sitemap And Detail-First Ecommerce
+
+For ecommerce sites, do not assume the visible list page is the best extraction source.
+
+If homepage or category pages look like JavaScript shells, shallow landing pages, region-specific pages, or noisy marketing pages, run:
+
+```text
+infer_category_tree(url)
+parse_sitemap(product_sitemap_url)
+analyze_detail_samples(product_or_category_url)
+```
+
+Strong signals for a sitemap/detail-first strategy:
+
+- `infer_category_tree.coverage.product_sitemap_count` is high
+- product URLs are available from robots/sitemap discovery
+- detail pages expose Product JSON-LD or Open Graph product meta
+- detail pages expose platform config such as Magento/Hyva swatch options
+- list-page selectors are weak, empty, or mostly decorative
+
+In this pattern, the Agent should build the crawler around:
+
+- product sitemap URL discovery
+- detail-page structured data extraction
+- product-attribute rows for fields such as color/material
+- platform variant config for sizes and availability
+- image filtering that keeps only product media URLs
+
 ## Page Understanding
 
 ### `scout_page`

@@ -30,7 +30,7 @@ Crawpapa-Fetch is not a CAPTCHA cracker, account bypass tool, or stealth abuse f
 Recommended analysis chain:
 
 ```text
-analyze_site_for_crawl
+build_site_model
 ```
 
 Or, if you want to inspect each stage yourself:
@@ -39,7 +39,10 @@ Or, if you want to inspect each stage yourself:
 probe_access_strategy
   -> fetch_best_page
   -> observe_browser_network
+  -> observe_interactions
+  -> infer_data_api
   -> infer_pagination_strategy
+  -> infer_category_tree
   -> analyze_detail_samples
   -> scout_page
   -> draft_collection_plan
@@ -48,6 +51,8 @@ probe_access_strategy
 ```
 
 For pre-crawl analysis, you usually stop at `validate_collection_plan` or `export_site_spec_to_spider` and pass the result to your own crawler framework.
+
+For ecommerce targets, check public sitemap and detail-page evidence early. If `infer_category_tree` finds strong product sitemap coverage and detail pages expose Product JSON-LD, Open Graph product meta, or platform variant config, prefer a sitemap-to-detail crawler over fragile list-page selectors.
 
 ## Key MCP Tools
 
