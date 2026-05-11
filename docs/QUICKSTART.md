@@ -25,7 +25,28 @@ See [INSTALL_UNIX.md](INSTALL_UNIX.md) for Linux/macOS details.
 
 ## 0.5. One-command analysis
 
-For most Agent pre-crawl work, start with the unified report:
+For Agent crawler implementation, start with the site model:
+
+```text
+build_site_model(
+  url="https://example.com/products",
+  goal="product_list",
+  fields="title,price,image_src,body"
+)
+```
+
+Use the model fields directly:
+
+- `site_model.access`
+- `site_model.best_data_source`
+- `site_model.data_sources`
+- `site_model.api_model`
+- `site_model.interaction_map`
+- `site_model.pagination`
+- `site_model.detail_strategy`
+- `site_model.crawler_plan`
+
+For human review or longer reports, use the unified analysis command:
 
 ```bash
 crawpapa-fetch analyze https://example.com/products --goal product_list --output-file report.json
@@ -64,6 +85,8 @@ set_proxy(proxy_url="http://127.0.0.1:7890", proxy_type="local")
 ```text
 probe_access_strategy(url)
 observe_browser_network(url)
+observe_interactions(url)
+infer_data_api(url or candidate_urls)
 infer_pagination_strategy(url)
 analyze_detail_samples(url)
 scout_page(url)

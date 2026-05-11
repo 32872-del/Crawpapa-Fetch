@@ -735,6 +735,59 @@ def test_observe_browser_network_finds_api_and_pagination_candidates():
     assert any(item["type"] == "network_api_candidate" for item in result["recommendations"])
 
 
+def test_observe_interactions_records_runtime_actions_and_requests():
+    with _local_site() as site:
+        result = json.loads(server.observe_interactions(
+            f"{site}/network-page",
+            render_time=1,
+            scroll_count=1,
+            click_next=False,
+            max_entries=30,
+            respect_robots=False,
+            allow_private=True,
+        ))
+
+    assert result["ok"] is True
+    assert result["actions"]
+    assert result["interaction_map"]
+    assert any("/api/catalog/products" in item["url"] for item in result["network"]["candidates"])
+    assert result["interaction_map"][0]["action"] == "scroll"
+
+
+def test_infer_data_api_finds_item_array_fields_and_pagination():
+    with _local_site() as site:
+        result = json.loads(server.infer_data_api(
+            url=f"{site}/api/catalog/products?page=1&limit=24",
+            respect_robots=False,
+            allow_private=True,
+        ))
+
+    assert result["ok"] is True
+    assert result["api_model"]["item_array"]["path"] == "items"
+    assert result["api_model"]["field_paths"]["title"]["path"] == "title"
+    assert result["api_model"]["field_paths"]["price"]["path"] == "price"
+    assert result["api_model"]["pagination"]["has_pagination"] is True
+    assert result["recommendations"][0]["action"] == "implement_api_crawler"
+
+
+def test_infer_data_api_accepts_candidate_urls_and_ranks_models():
+    with _local_site() as site:
+        result = json.loads(server.infer_data_api(
+            candidate_urls=json.dumps([
+                f"{site}/missing-api",
+                f"{site}/api/catalog/products?page=1&limit=24",
+            ]),
+            max_candidates=2,
+            respect_robots=False,
+            allow_private=True,
+        ))
+
+    assert result["ok"] is True
+    assert result["api_model"]["source_url"].endswith("/api/catalog/products?page=1&limit=24")
+    assert result["diagnostics"]["candidate_count"] == 1
+    assert result["diagnostics"]["error_count"] == 1
+
+
 def test_infer_pagination_strategy_finds_next_link_and_sample_urls():
     with _local_site() as site:
         result = json.loads(server.infer_pagination_strategy(
@@ -816,6 +869,58 @@ def test_analyze_site_for_crawl_builds_unified_report():
     assert result["validation"]["ok"] is True
     assert any(step["name"] == "analyze_detail_samples" and step["ok"] for step in result["steps"])
     assert any(item.get("type") == "implementation_mode" for item in result["recommendations"])
+
+
+def test_build_site_model_returns_agent_facing_model():
+    with _local_site() as site:
+        result = json.loads(server.build_site_model(
+            f"{site}/products-page",
+            goal="product_list",
+            fields="title,price,image_src,body",
+            modes="requests",
+            include_browser=False,
+            observe_network_flag=False,
+            use_cache=False,
+            sample_size=2,
+            max_pages=2,
+            respect_robots=False,
+            allow_private=True,
+        ))
+
+    assert result["ok"] is True
+    model = result["site_model"]
+    assert model["version"] == "site_model.v1"
+    assert model["access"]["access_class"] in {"html_available", "api_hinted_page"}
+    assert model["access"]["best_mode"] == "requests"
+    assert model["detail_strategy"]["list_selector"]
+    assert model["detail_strategy"]["fields"]["title"].startswith("h1.")
+    assert model["pagination"]["sample_next_urls"][0].endswith("page=2")
+    assert "sample_detail_pages" in model["next_actions"]
+    assert result["data"]["site_model"]["crawler_plan"]["mode"] == "requests"
+
+
+def test_build_site_model_includes_validated_api_model_from_hints():
+    with _local_site() as site:
+        result = json.loads(server.build_site_model(
+            f"{site}/api-rich",
+            goal="product_list",
+            fields="title,price,image_src,body",
+            modes="requests",
+            include_browser=False,
+            observe_network_flag=False,
+            use_cache=False,
+            sample_size=1,
+            max_pages=1,
+            respect_robots=False,
+            allow_private=True,
+        ))
+
+    assert result["ok"] is True
+    model = result["site_model"]
+    assert model["api_model"]["item_array"]["path"] == "items"
+    assert model["best_data_source"]["type"] == "api_model"
+    assert model["crawler_plan"]["api"]["item_array_path"] == "items"
+    assert "implement_api_crawler" in model["next_actions"]
 
 
 def test_field_quality_report_scores_detail_samples():

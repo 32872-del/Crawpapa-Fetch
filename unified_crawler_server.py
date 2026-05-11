@@ -1433,6 +1433,223 @@ def _network_recommendations(summary: dict[str, Any]) -> list[dict[str, Any]]:
         })
     return recommendations
 
+FIELD_NAME_HINTS = {
+    "title": {"title", "name", "label", "headline", "productname", "displayname"},
+    "price": {"price", "amount", "saleprice", "currentprice", "listprice", "originalprice"},
+    "image": {"image", "images", "imageurl", "img", "src", "thumbnail", "picture"},
+    "url": {"url", "href", "link", "producturl", "detailurl", "canonical"},
+    "description": {"description", "desc", "summary", "body", "text"},
+    "id": {"id", "sku", "pid", "productid", "itemid"},
+}
+PAGINATION_JSON_KEYS = {"page", "currentpage", "totalpage", "totalpages", "offset", "limit", "cursor", "next", "nextcursor", "hasnext", "total", "count"}
+
+def _json_path_join(parent: str, child: str) -> str:
+    if not parent:
+        return child
+    if child.startswith("["):
+        return f"{parent}{child}"
+    return f"{parent}.{child}"
+
+def _walk_json_nodes(value: Any, path: str = "", max_depth: int = 8):
+    yield path or "$", value
+    if max_depth <= 0:
+        return
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield from _walk_json_nodes(child, _json_path_join(path, str(key)), max_depth - 1)
+    elif isinstance(value, list):
+        for index, child in enumerate(value[:5]):
+            yield from _walk_json_nodes(child, _json_path_join(path, f"[{index}]"), max_depth - 1)
+
+def _value_kind(value: Any) -> str:
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        if value.startswith(("http://", "https://", "/")):
+            return "url_or_path"
+        if re.search(r"\d+[.,]\d{2}", value):
+            return "price_like"
+        return "text"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return type(value).__name__
+
+def _score_json_array_candidate(path: str, value: list[Any]) -> int:
+    if not value:
+        return 0
+    score = min(len(value) * 3, 45)
+    if re.search(r"(items|products|results|records|data|list|jobs|articles|albums)", path, re.I):
+        score += 35
+    dict_items = [item for item in value[:10] if isinstance(item, dict)]
+    if dict_items:
+        score += 30
+        keys = {str(key).lower() for item in dict_items for key in item.keys()}
+        for hints in FIELD_NAME_HINTS.values():
+            if keys & hints:
+                score += 8
+    elif all(isinstance(item, (str, int, float)) for item in value[:10]):
+        score += 5
+    return score
+
+def _infer_json_item_array(data: Any) -> dict[str, Any]:
+    candidates = []
+    for path, value in _walk_json_nodes(data, max_depth=8):
+        if isinstance(value, list):
+            score = _score_json_array_candidate(path, value)
+            if score <= 0:
+                continue
+            sample = value[0] if value else None
+            candidates.append({
+                "path": path,
+                "count": len(value),
+                "score": score,
+                "sample_type": type(sample).__name__,
+                "sample_keys": list(sample.keys())[:30] if isinstance(sample, dict) else [],
+            })
+    return max(candidates, key=lambda item: item["score"], default={})
+
+def _infer_json_field_paths(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    flattened: list[tuple[str, str, Any]] = []
+    for path, value in _walk_json_nodes(item, max_depth=5):
+        if path == "$" or isinstance(value, (dict, list)):
+            continue
+        leaf = path.rsplit(".", 1)[-1].lower().replace("_", "").replace("-", "")
+        flattened.append((path, leaf, value))
+    fields: dict[str, Any] = {}
+    for field, hints in FIELD_NAME_HINTS.items():
+        best = None
+        for path, leaf, value in flattened:
+            score = 0
+            if leaf in hints:
+                score += 60
+            elif any(hint in leaf for hint in hints):
+                score += 35
+            kind = _value_kind(value)
+            if field == "price" and kind in {"number", "price_like"}:
+                score += 25
+            if field in {"image", "url"} and kind == "url_or_path":
+                score += 20
+            if field in {"title", "description"} and kind == "text":
+                score += 15
+            if score and (best is None or score > best["score"]):
+                best = {"path": path, "score": score, "sample": str(value)[:160], "kind": kind}
+        if best:
+            fields[field] = best
+    return fields
+
+def _infer_json_pagination(data: Any) -> dict[str, Any]:
+    fields = {}
+    for path, value in _walk_json_nodes(data, max_depth=5):
+        if isinstance(value, (dict, list)):
+            continue
+        key = path.rsplit(".", 1)[-1].lower().replace("_", "").replace("-", "")
+        if key in PAGINATION_JSON_KEYS or any(token in key for token in PAGINATION_JSON_KEYS):
+            fields[path] = {"sample": str(value)[:120], "kind": _value_kind(value)}
+    return {
+        "fields": fields,
+        "has_pagination": bool(fields),
+    }
+
+def _apply_simple_json_path(data: Any, path: str) -> Any:
+    if not path or path == "$":
+        return data
+    current = data
+    token_re = re.compile(r"([^.\[\]]+)|(\[(\d+)\])")
+    for match in token_re.finditer(path):
+        key = match.group(1)
+        index = match.group(3)
+        if key is not None:
+            if not isinstance(current, dict) or key not in current:
+                return None
+            current = current[key]
+        elif index is not None:
+            idx = int(index)
+            if not isinstance(current, list) or idx >= len(current):
+                return None
+            current = current[idx]
+    return current
+
+def _infer_data_api_from_json(data: Any, source_url: str = "") -> dict[str, Any]:
+    item_array = _infer_json_item_array(data)
+    sample_item = None
+    if item_array:
+        array_value = _apply_simple_json_path(data, item_array["path"])
+        if isinstance(array_value, list) and array_value:
+            sample_item = array_value[0]
+    field_paths = _infer_json_field_paths(sample_item)
+    pagination = _infer_json_pagination(data)
+    confidence = 0.3
+    if item_array:
+        confidence += min(item_array.get("score", 0) / 160, 0.45)
+    if field_paths:
+        confidence += min(len(field_paths) * 0.06, 0.2)
+    if pagination.get("has_pagination"):
+        confidence += 0.08
+    return {
+        "source_url": source_url,
+        "item_array": item_array,
+        "field_paths": field_paths,
+        "pagination": pagination,
+        "confidence": round(min(confidence, 0.95), 3),
+        "sample_item": sample_item if isinstance(sample_item, dict) else {},
+    }
+
+def _api_model_recommendation(model: dict[str, Any]) -> dict[str, Any]:
+    item_path = (model.get("item_array") or {}).get("path", "")
+    fields = model.get("field_paths") or {}
+    pagination = model.get("pagination") or {}
+    confidence = model.get("confidence", 0.0)
+    if item_path and fields:
+        action = "implement_api_crawler"
+        reason = "JSON response exposes a likely item array and usable field paths."
+    elif item_path:
+        action = "sample_more_api_responses"
+        reason = "JSON response exposes a likely item array, but field paths need more samples."
+    else:
+        action = "manual_api_review"
+        reason = "No strong item array was inferred from this JSON response."
+    return {
+        "type": "api_model",
+        "action": action,
+        "item_array_path": item_path,
+        "field_count": len(fields),
+        "has_pagination": bool(pagination.get("has_pagination")),
+        "confidence": confidence,
+        "reason": reason,
+    }
+
+def _rank_api_models(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        models,
+        key=lambda item: (
+            float(item.get("confidence", 0)),
+            int((item.get("item_array") or {}).get("score", 0)),
+            len(item.get("field_paths") or {}),
+        ),
+        reverse=True,
+    )
+
+def _candidate_urls_from_text(candidate_urls: str) -> list[str]:
+    if not candidate_urls:
+        return []
+    text = candidate_urls.strip()
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(item.get("url", item) if isinstance(item, dict) else item) for item in parsed if item]
+        if isinstance(parsed, dict):
+            values = parsed.get("urls") or parsed.get("candidates") or []
+            return [str(item.get("url", item) if isinstance(item, dict) else item) for item in values if item]
+    except Exception:
+        pass
+    return [line.strip() for line in re.split(r"[\r\n,]+", text) if line.strip()]
+
 def _same_site_url(url_value: str, base_url: str) -> bool:
     parsed = urlparse(url_value or "")
     base = urlparse(base_url or "")
@@ -2661,6 +2878,193 @@ def _site_analysis_step(name: str, func, *args, compact_keys: list[str] | None =
             "error_type": type(exc).__name__,
             "error": str(exc)[:500],
         }, {"ok": False, "error": str(exc)[:500], "error_type": type(exc).__name__}
+
+def _classify_site_model_access(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary", {}) or {}
+    access_summary = (report.get("access", {}) or {}).get("summary", {}) or {}
+    categories = set(summary.get("access_categories") or access_summary.get("categories") or [])
+    network = ((report.get("network", {}) or {}).get("network", {}) or {})
+    scout = report.get("scout", {}) or {}
+    api_count = int((scout.get("api_hints") or {}).get("count") or access_summary.get("api_hint_count") or 0)
+    network_candidates = network.get("candidates") or []
+    best_mode = summary.get("best_mode") or access_summary.get("best_mode") or ""
+    if "forbidden" in categories or "challenge" in categories:
+        access_class = "blocked_or_challenged"
+    elif "js_shell" in categories and (network_candidates or api_count):
+        access_class = "api_driven_js_page"
+    elif "js_shell" in categories:
+        access_class = "browser_rendered_js_page"
+    elif network_candidates or api_count:
+        access_class = "api_hinted_page"
+    elif best_mode == "browser":
+        access_class = "browser_rendered_page"
+    elif best_mode:
+        access_class = "html_available"
+    else:
+        access_class = "unknown"
+    confidence = {
+        "blocked_or_challenged": 0.84,
+        "api_driven_js_page": 0.82,
+        "browser_rendered_js_page": 0.72,
+        "api_hinted_page": 0.7,
+        "browser_rendered_page": 0.68,
+        "html_available": 0.76,
+        "unknown": 0.35,
+    }.get(access_class, 0.4)
+    return {
+        "access_class": access_class,
+        "confidence": confidence,
+        "best_mode": best_mode,
+        "categories": sorted(categories),
+        "api_hint_count": api_count,
+        "network_candidate_count": len(network_candidates),
+    }
+
+def _site_model_data_sources(report: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    network_candidates = (((report.get("network", {}) or {}).get("network", {}) or {}).get("candidates") or [])
+    for item in network_candidates[:8]:
+        sources.append({
+            "type": "network",
+            "url": item.get("url", ""),
+            "method": item.get("method", "GET"),
+            "resource_type": item.get("resource_type", ""),
+            "score": item.get("score", 0),
+            "json_like": bool(item.get("json_like")),
+            "pagination_params": item.get("pagination_params") or {},
+            "confidence": round(min(0.95, 0.45 + float(item.get("score", 0)) / 120), 3),
+        })
+    api_hints = (((report.get("scout", {}) or {}).get("api_hints", {}) or {}).get("sample") or
+                 ((report.get("access", {}) or {}).get("api_hints") or []))
+    for item in api_hints[:8]:
+        sources.append({
+            "type": "api_hint",
+            "url": item.get("url", ""),
+            "method": "GET",
+            "resource_type": "script_hint",
+            "score": 45 if item.get("json_like") else 30,
+            "json_like": bool(item.get("json_like")),
+            "pagination_params": _pagination_params_from_url(item.get("url", "")),
+            "confidence": 0.62 if item.get("json_like") else 0.48,
+        })
+    if report.get("detail_samples", {}).get("samples"):
+        sources.append({
+            "type": "dom_detail_samples",
+            "url": report.get("url", ""),
+            "score": 55,
+            "confidence": 0.68,
+            "sample_count": len(report.get("detail_samples", {}).get("samples", [])),
+        })
+    deduped = []
+    seen = set()
+    for item in sorted(sources, key=lambda value: (value.get("confidence", 0), value.get("score", 0)), reverse=True):
+        key = (item.get("type"), item.get("url"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped[:12]
+
+def _site_model_best_data_source(data_sources: list[dict[str, Any]]) -> dict[str, Any]:
+    if not data_sources:
+        return {
+            "type": "manual_review",
+            "confidence": 0.35,
+            "reason": "No strong DOM/API/network data source was identified.",
+        }
+    best = data_sources[0]
+    reason = "Best scored runtime data source."
+    if best.get("type") == "network":
+        reason = "Browser runtime observed a high-scoring request candidate."
+    elif best.get("type") == "api_hint":
+        reason = "Page scripts exposed a likely public API or data endpoint."
+    elif best.get("type") == "dom_detail_samples":
+        reason = "Detail-page sampling found usable DOM selectors."
+    return {**best, "reason": reason}
+
+def _site_model_interaction_map(report: dict[str, Any]) -> list[dict[str, Any]]:
+    interactions = []
+    pagination = report.get("pagination", {}) or {}
+    if pagination.get("recommended"):
+        interactions.append({
+            "action": "paginate",
+            "strategy": pagination.get("recommended"),
+            "sample_next_urls": pagination.get("sample_next_urls", []),
+            "confidence": pagination.get("recommended", {}).get("confidence", 0.5),
+        })
+    network_candidates = (((report.get("network", {}) or {}).get("network", {}) or {}).get("candidates") or [])
+    paged_network = [
+        item for item in network_candidates
+        if _has_strong_pagination_params(item.get("pagination_params") or {})
+    ]
+    if paged_network:
+        interactions.append({
+            "action": "network_pagination",
+            "triggered_requests": [item.get("url", "") for item in paged_network[:5]],
+            "pagination_params": paged_network[0].get("pagination_params") or {},
+            "confidence": 0.78,
+        })
+    plan = ((report.get("plan") or {}).get("plan") or report.get("plan") or {})
+    if plan.get("category_urls"):
+        interactions.append({
+            "action": "category_navigation",
+            "sample_urls": plan.get("category_urls", [])[:8],
+            "confidence": 0.65,
+        })
+    return interactions
+
+def _site_model_from_analysis(report: dict[str, Any]) -> dict[str, Any]:
+    data_sources = _site_model_data_sources(report)
+    access = _classify_site_model_access(report)
+    plan = ((report.get("plan") or {}).get("plan") or report.get("plan") or {})
+    scout = report.get("scout", {}) or {}
+    model = {
+        "version": "site_model.v1",
+        "url": report.get("url", ""),
+        "goal": report.get("goal", ""),
+        "access": access,
+        "site_profile": report.get("site_profile", {}),
+        "best_data_source": _site_model_best_data_source(data_sources),
+        "data_sources": data_sources,
+        "interaction_map": _site_model_interaction_map(report),
+        "pagination": {
+            "recommended": (report.get("pagination", {}) or {}).get("recommended", {}),
+            "sample_next_urls": (report.get("pagination", {}) or {}).get("sample_next_urls", []),
+        },
+        "category_strategy": {
+            "menu_candidates": scout.get("menu_candidates", [])[:5],
+            "menu_source_path": plan.get("menu_source_path", ""),
+            "category_urls": plan.get("category_urls", [])[:20],
+        },
+        "detail_strategy": {
+            "list_selector": plan.get("list_selector") or (report.get("summary", {}) or {}).get("list_selector", ""),
+            "fields": plan.get("fields", {}),
+            "sampled_detail_count": (report.get("detail_samples", {}) or {}).get("sampled_detail_count", 0),
+            "risk_flags": (report.get("detail_samples", {}) or {}).get("risk_flags", []),
+        },
+        "crawler_plan": plan,
+        "risks": list(OrderedDict.fromkeys(
+            access.get("categories", [])
+            + ((report.get("detail_samples", {}) or {}).get("risk_flags", []) or [])
+            + ([access["access_class"]] if access.get("access_class") in {"blocked_or_challenged", "unknown"} else [])
+        )),
+        "evidence": {
+            "steps": report.get("steps", []),
+            "field_quality": report.get("field_quality", {}),
+            "validation": report.get("validation", {}),
+        },
+    }
+    next_actions = []
+    if model["best_data_source"].get("type") in {"network", "api_hint"}:
+        next_actions.append("validate_api_candidate")
+    if model["pagination"].get("sample_next_urls"):
+        next_actions.append("sample_pagination_urls")
+    if model["detail_strategy"].get("list_selector"):
+        next_actions.append("sample_detail_pages")
+    if model["access"]["access_class"] == "blocked_or_challenged":
+        next_actions.append("stop_or_use_authorized_source")
+    model["next_actions"] = next_actions or ["manual_review"]
+    return model
 
 def _append_unique_recommendation(target: list[dict[str, Any]], item: dict[str, Any]) -> None:
     marker = (item.get("type") or item.get("action") or "", json.dumps(item.get("action", item.get("reason", "")), ensure_ascii=False, sort_keys=True))
@@ -3984,6 +4388,171 @@ class HTTPEngine:
             max_json_sample_bytes,
         )
 
+    def observe_interactions(self, url: str, wait_until: str = "domcontentloaded",
+                             render_time: float = BROWSER_RENDER_TIME,
+                             wait_selector: str = "", scroll_count: int = 2,
+                             scroll_delay: float = 1.0,
+                             click_next: bool = True,
+                             max_clicks: int = 2,
+                             max_entries: int = 300,
+                             capture_json_sample: bool = False) -> dict[str, Any]:
+        return self._run_browser_task(
+            self._observe_interactions_sync,
+            url,
+            wait_until,
+            render_time,
+            wait_selector,
+            scroll_count,
+            scroll_delay,
+            click_next,
+            max_clicks,
+            max_entries,
+            capture_json_sample,
+        )
+
+    def _observe_interactions_sync(self, url: str, wait_until: str = "domcontentloaded",
+                                   render_time: float = BROWSER_RENDER_TIME,
+                                   wait_selector: str = "", scroll_count: int = 2,
+                                   scroll_delay: float = 1.0,
+                                   click_next: bool = True,
+                                   max_clicks: int = 2,
+                                   max_entries: int = 300,
+                                   capture_json_sample: bool = False) -> dict[str, Any]:
+        self._ensure_browser()
+        domain = urlparse(url).netloc.lower()
+        context = self._get_context_for_domain(domain)
+        page = context.new_page()
+        entries: list[dict[str, Any]] = []
+        action_marks: list[dict[str, Any]] = []
+        max_entries = max(1, min(int(max_entries), 1000))
+
+        def on_response(response):
+            if len(entries) >= max_entries:
+                return
+            with contextlib.suppress(Exception):
+                req = response.request
+                resource_type = req.resource_type
+                response_url = response.url
+                headers = response.headers or {}
+                content_type = headers.get("content-type", "")
+                if not (
+                    resource_type in {"xhr", "fetch", "document"}
+                    or "json" in content_type.lower()
+                    or (NETWORK_DATA_KEYWORDS.search(response_url or "") and not _looks_like_static_asset_url(response_url or ""))
+                ):
+                    return
+                item = {
+                    "url": response_url,
+                    "method": req.method,
+                    "resource_type": resource_type,
+                    "status": response.status,
+                    "content_type": content_type.split(";")[0],
+                    "pagination_params": _pagination_params_from_url(response_url),
+                    "json_like": _is_json_like_url(response_url) or "json" in content_type.lower(),
+                    "post_data_preview": (req.post_data or "")[:500] if req.method != "GET" else "",
+                }
+                if capture_json_sample and item["json_like"]:
+                    with contextlib.suppress(Exception):
+                        text = response.text()
+                        item["sample_text"] = text[:5000]
+                entries.append(item)
+
+        def page_state() -> dict[str, Any]:
+            return page.evaluate("""() => ({
+                url: location.href,
+                textLength: document.body ? document.body.innerText.length : 0,
+                anchorCount: document.querySelectorAll('a[href]').length,
+                elementCount: document.querySelectorAll('body *').length,
+                scrollHeight: document.documentElement.scrollHeight || document.body.scrollHeight || 0
+            })""")
+
+        def mark(action: str, before: dict[str, Any], start_index: int, meta: dict[str, Any] | None = None) -> None:
+            after = page_state()
+            new_entries = entries[start_index:]
+            action_marks.append({
+                "action": action,
+                "url_before": before.get("url"),
+                "url_after": after.get("url"),
+                "new_request_count": len(new_entries),
+                "new_requests": new_entries[:20],
+                "dom_delta": {
+                    "text_chars": int(after.get("textLength", 0)) - int(before.get("textLength", 0)),
+                    "anchors": int(after.get("anchorCount", 0)) - int(before.get("anchorCount", 0)),
+                    "elements": int(after.get("elementCount", 0)) - int(before.get("elementCount", 0)),
+                    "scroll_height": int(after.get("scrollHeight", 0)) - int(before.get("scrollHeight", 0)),
+                },
+                "meta": meta or {},
+            })
+
+        page.on("response", on_response)
+        try:
+            page.set_default_timeout(BROWSER_TIMEOUT)
+            main_response = page.goto(url, wait_until=wait_until, timeout=BROWSER_TIMEOUT)
+            if wait_selector:
+                with contextlib.suppress(Exception):
+                    page.wait_for_selector(wait_selector, timeout=15000)
+            if render_time > 0:
+                time.sleep(render_time)
+            html = page.content()
+            challenge = _detect_challenge_page(html)
+            if challenge:
+                raise RuntimeError(f"浏览器返回疑似验证码/人机验证页面: {challenge}")
+
+            for index in range(max(0, min(int(scroll_count), 8))):
+                before = page_state()
+                start_index = len(entries)
+                page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight || document.body.scrollHeight)")
+                time.sleep(scroll_delay)
+                mark("scroll", before, start_index, {"index": index + 1})
+
+            if click_next:
+                selectors = [
+                    "a[rel=next]",
+                    "button[aria-label*=Next i]",
+                    "a[aria-label*=Next i]",
+                    "button:has-text('Load more')",
+                    "button:has-text('More')",
+                    "a:has-text('Next')",
+                    "button:has-text('Next')",
+                    "a:has-text('下一页')",
+                    "button:has-text('加载更多')",
+                ]
+                clicks_done = 0
+                for selector in selectors:
+                    if clicks_done >= max(0, min(int(max_clicks), 5)):
+                        break
+                    locator = page.locator(selector).first
+                    with contextlib.suppress(Exception):
+                        if locator.count() <= 0 or not locator.is_visible():
+                            continue
+                        before = page_state()
+                        start_index = len(entries)
+                        locator.click(timeout=5000)
+                        time.sleep(max(scroll_delay, 1.0))
+                        mark("click_candidate", before, start_index, {"selector": selector})
+                        clicks_done += 1
+
+            final_html = page.content()
+            final_soup = BeautifulSoup(final_html or "", "html.parser")
+            summary = _summarize_network_entries(entries)
+            self._save_browser_context_state(domain, context)
+            return {
+                "url": url,
+                "main_status": main_response.status if main_response else None,
+                "page": {
+                    "html_bytes": len(final_html or ""),
+                    "text_chars": len(final_soup.get_text(" ", strip=True)),
+                    "dom_anchor_count": len(final_soup.find_all("a", href=True)),
+                    "script_count": len(final_soup.find_all("script")),
+                    "truncated_likely": len(final_html or "") >= max(0, FETCH_MAX_LENGTH - 16),
+                },
+                "actions": action_marks,
+                "network": summary,
+                "recommendations": _network_recommendations(summary),
+            }
+        finally:
+            page.close()
+
     def _observe_network_sync(self, url: str, wait_until: str = "domcontentloaded",
                               render_time: float = BROWSER_RENDER_TIME,
                               wait_selector: str = "", scroll_count: int = 0,
@@ -4657,6 +5226,109 @@ def fetch_json(url: str, method: str = "GET", body: str = "",
         return json.dumps(data, ensure_ascii=False, indent=2)
     except Exception as e:
         return _error_result(str(e), "json_fetch_failed", "检查 URL 和 JSON 格式")
+
+@mcp.tool()
+def infer_data_api(url: str = "", method: str = "GET", body: str = "",
+                   headers: str = "{}", sample_json: str = "",
+                   candidate_urls: str = "", max_candidates: int = 5,
+                   respect_robots: bool = RESPECT_ROBOTS, rate_limit: float = 0.0,
+                   verify_tls: bool = VERIFY_TLS, allow_private: bool = False) -> str:
+    """
+    Infer JSON API structure: item array path, field paths, pagination fields,
+    and implementation recommendation.
+
+    Provide either sample_json, a URL, or candidate_urls from network observation.
+    This tool only fetches public/allowed JSON endpoints and does not bypass
+    access controls.
+    """
+    try:
+        verify_tls = _effective_verify_tls(verify_tls)
+        parsed_headers, _ = _get_headers(headers)
+        parsed_headers["Accept"] = parsed_headers.get("Accept", "application/json")
+        models: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        if sample_json:
+            data = json.loads(sample_json)
+            models.append(_infer_data_api_from_json(data, source_url=url or "sample_json"))
+        else:
+            urls = []
+            if url:
+                urls.append(url)
+            urls.extend(_candidate_urls_from_text(candidate_urls))
+            deduped_urls = []
+            seen = set()
+            for item_url in urls:
+                if item_url and item_url not in seen:
+                    seen.add(item_url)
+                    deduped_urls.append(item_url)
+            for item_url in deduped_urls[:max(1, min(int(max_candidates), 20))]:
+                try:
+                    _apply_request_policy(item_url, respect_robots=respect_robots,
+                                          rate_limit=rate_limit or None,
+                                          allow_private=allow_private)
+                    if method.upper() == "POST":
+                        resp_text = _engine.post_with_requests(
+                            item_url, body, "application/json", parsed_headers,
+                            verify_tls=verify_tls,
+                        )
+                    else:
+                        resp_text = _engine.fetch_with_requests(
+                            item_url, parsed_headers, verify_tls=verify_tls,
+                        )
+                    data = json.loads(resp_text)
+                    models.append(_infer_data_api_from_json(data, source_url=item_url))
+                except Exception as exc:
+                    errors.append({
+                        "url": item_url,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:300],
+                    })
+
+        ranked = _rank_api_models(models)
+        best = ranked[0] if ranked else {}
+        recommendations = [_api_model_recommendation(best)] if best else [{
+            "type": "api_model",
+            "action": "manual_api_review",
+            "reason": "No JSON API model could be inferred from the provided input.",
+            "confidence": 0.35,
+        }]
+        return _success_result(_v5_envelope(
+            bool(best and best.get("item_array")),
+            data={
+                "api_model": best,
+                "candidates": ranked[:max(1, min(int(max_candidates), 20))],
+                "errors": errors,
+            },
+            diagnostics={
+                "candidate_count": len(ranked),
+                "error_count": len(errors),
+                "input": {
+                    "has_sample_json": bool(sample_json),
+                    "url": url,
+                    "candidate_url_count": len(_candidate_urls_from_text(candidate_urls)),
+                },
+            },
+            recommendations=recommendations,
+            api_model=best,
+            candidates=ranked[:max(1, min(int(max_candidates), 20))],
+            errors=errors,
+        ))
+    except Exception as e:
+        return _success_result(_v5_envelope(
+            False,
+            data={"url": url},
+            diagnostics={"error": str(e), "type": "api_model_infer_failed"},
+            recommendations=[{
+                "type": "api_model",
+                "action": "manual_api_review",
+                "reason": "API model inference failed. Check JSON validity, endpoint access, and response type.",
+                "confidence": 0.35,
+            }],
+            error=True,
+            type="api_model_infer_failed",
+            message=str(e),
+        ))
 
 @mcp.tool()
 def parse_html(html: str, selector: str) -> str:
@@ -7124,6 +7796,95 @@ def observe_browser_network(url: str, wait_selector: str = "",
         ))
 
 @mcp.tool()
+def observe_interactions(url: str, wait_selector: str = "",
+                         render_time: float = 3.0,
+                         wait_until: str = "domcontentloaded",
+                         scroll_count: int = 2,
+                         scroll_delay: float = 1.0,
+                         click_next: bool = True,
+                         max_clicks: int = 2,
+                         max_entries: int = 300,
+                         capture_json_sample: bool = False,
+                         respect_robots: bool = RESPECT_ROBOTS,
+                         rate_limit: float = 0.0,
+                         allow_private: bool = False) -> str:
+    """
+    Observe runtime interactions: page load, scroll, and safe next/load-more clicks.
+
+    It records newly triggered network requests and DOM deltas per action. It does
+    not submit forms, bypass logins, solve CAPTCHA, or access private data.
+    """
+    try:
+        _apply_request_policy(url, respect_robots=respect_robots, rate_limit=rate_limit or None,
+                              allow_private=allow_private)
+        result = _engine.observe_interactions(
+            url,
+            wait_until=wait_until,
+            render_time=render_time,
+            wait_selector=wait_selector,
+            scroll_count=scroll_count,
+            scroll_delay=scroll_delay,
+            click_next=click_next,
+            max_clicks=max_clicks,
+            max_entries=max_entries,
+            capture_json_sample=capture_json_sample,
+        )
+        action_summaries = []
+        for action in result.get("actions", []):
+            network_summary = _summarize_network_entries(action.get("new_requests", []), max_candidates=10)
+            action_summaries.append({
+                "action": action.get("action"),
+                "url_before": action.get("url_before"),
+                "url_after": action.get("url_after"),
+                "new_request_count": action.get("new_request_count", 0),
+                "dom_delta": action.get("dom_delta", {}),
+                "meta": action.get("meta", {}),
+                "network_candidates": network_summary.get("candidates", [])[:5],
+            })
+        interaction_map = []
+        for action in action_summaries:
+            candidates = action.get("network_candidates") or []
+            paged = [item for item in candidates if _has_strong_pagination_params(item.get("pagination_params") or {})]
+            interaction_map.append({
+                "action": action.get("action"),
+                "triggered_request_count": action.get("new_request_count", 0),
+                "dom_delta": action.get("dom_delta", {}),
+                "candidate_api": candidates[0] if candidates else {},
+                "pagination_params": (paged[0].get("pagination_params") if paged else {}),
+                "confidence": 0.78 if candidates else 0.45,
+                "meta": action.get("meta", {}),
+            })
+        payload = {
+            "url": url,
+            "main_status": result.get("main_status"),
+            "page": result.get("page"),
+            "actions": action_summaries,
+            "interaction_map": interaction_map,
+            "network": result.get("network"),
+        }
+        return _success_result(_v5_envelope(
+            True,
+            data=payload,
+            diagnostics={"raw_action_count": len(result.get("actions", []))},
+            recommendations=result.get("recommendations", []),
+            **_v5_compat(payload),
+        ))
+    except Exception as e:
+        return _success_result(_v5_envelope(
+            False,
+            data={"url": url},
+            diagnostics={"error": str(e), "type": "interaction_observe_failed"},
+            recommendations=[{
+                "type": "browser_runtime_check",
+                "reason": "Interaction observation failed. Check Playwright installation, access policy, and whether the target returns a challenge.",
+                "confidence": 0.82,
+            }],
+            error=True,
+            type="interaction_observe_failed",
+            message=str(e),
+        ))
+
+@mcp.tool()
 def infer_pagination_strategy(url: str, mode: str = "auto",
                               use_cache: bool = True,
                               wait_selector: str = "",
@@ -7630,6 +8391,182 @@ def analyze_site_for_crawl(url: str,
             type="site_analysis_failed",
             message=str(e),
         ))
+
+@mcp.tool()
+def build_site_model(url: str,
+                     goal: str = "product_list",
+                     fields: str = "title,price,image_src,body",
+                     modes: str = "requests,curl_cffi,browser",
+                     mode: str = "auto",
+                     include_browser: bool = True,
+                     observe_network_flag: bool = True,
+                     sample_size: int = 2,
+                     max_pages: int = 3,
+                     max_items: int = 20,
+                     wait_selector: str = "",
+                     render_time: float = 3.0,
+                     wait_until: str = "domcontentloaded",
+                     scroll_count: int = 1,
+                     scroll_delay: float = 1.0,
+                     observe_interactions_flag: bool = True,
+                     use_cache: bool = False,
+                     respect_robots: bool = RESPECT_ROBOTS,
+                     allow_private: bool = False) -> str:
+    """
+    Build an Agent-facing site model from runtime access, network, pagination,
+    category, and detail evidence.
+
+    This is the preferred high-level entry when an Agent needs a compact model
+    for crawler implementation rather than a full human report.
+    """
+    try:
+        raw = analyze_site_for_crawl(
+            url=url,
+            goal=goal,
+            fields=fields,
+            modes=modes,
+            mode=mode,
+            sample_size=sample_size,
+            max_pages=max_pages,
+            max_items=max_items,
+            include_browser=include_browser,
+            observe_network_flag=observe_network_flag,
+            wait_selector=wait_selector,
+            render_time=render_time,
+            wait_until=wait_until,
+            scroll_count=scroll_count,
+            scroll_delay=scroll_delay,
+            use_cache=use_cache,
+            respect_robots=respect_robots,
+            allow_private=allow_private,
+        )
+        analysis = _loads_tool_result(raw)
+        report = {**analysis, **(analysis.get("data") if isinstance(analysis.get("data"), dict) else {})}
+        diagnostics = analysis.get("diagnostics") or {}
+        sections = diagnostics.get("sections") or {}
+        for key, value in sections.items():
+            report.setdefault(key, value)
+        if "steps" not in report and diagnostics.get("steps"):
+            report["steps"] = diagnostics.get("steps")
+        model = _site_model_from_analysis(report)
+        interaction_payload: dict[str, Any] = {}
+        if observe_interactions_flag and include_browser and HAS_PLAYWRIGHT:
+            interaction_raw = observe_interactions(
+                url=url,
+                wait_selector=wait_selector,
+                render_time=render_time,
+                wait_until=wait_until,
+                scroll_count=scroll_count,
+                scroll_delay=scroll_delay,
+                click_next=True,
+                max_clicks=2,
+                max_entries=200,
+                capture_json_sample=False,
+                respect_robots=respect_robots,
+                allow_private=allow_private,
+            )
+            interaction_payload = _loads_tool_result(interaction_raw)
+            if interaction_payload.get("ok"):
+                runtime_map = interaction_payload.get("interaction_map") or interaction_payload.get("data", {}).get("interaction_map") or []
+                if runtime_map:
+                    model["interaction_map"] = [*runtime_map, *model.get("interaction_map", [])]
+                runtime_network = interaction_payload.get("network") or interaction_payload.get("data", {}).get("network") or {}
+                for candidate in runtime_network.get("candidates", [])[:5]:
+                    data_source = {
+                        "type": "interaction_network",
+                        "url": candidate.get("url", ""),
+                        "method": candidate.get("method", "GET"),
+                        "resource_type": candidate.get("resource_type", ""),
+                        "score": candidate.get("score", 0),
+                        "json_like": bool(candidate.get("json_like")),
+                        "pagination_params": candidate.get("pagination_params") or {},
+                        "confidence": round(min(0.95, 0.5 + float(candidate.get("score", 0)) / 120), 3),
+                    }
+                    if data_source["url"] and all(existing.get("url") != data_source["url"] for existing in model["data_sources"]):
+                        model["data_sources"].insert(0, data_source)
+                model["best_data_source"] = _site_model_best_data_source(model["data_sources"])
+                model["evidence"]["interactions"] = {
+                    "actions": interaction_payload.get("actions") or interaction_payload.get("data", {}).get("actions", []),
+                    "network_candidate_count": len((runtime_network.get("candidates") or [])),
+                }
+        api_candidate_urls = [
+            item.get("url", "")
+            for item in model.get("data_sources", [])
+            if item.get("type") in {"network", "interaction_network", "api_hint"}
+            and item.get("url")
+            and (item.get("json_like") or item.get("pagination_params"))
+        ]
+        api_model_payload: dict[str, Any] = {}
+        if api_candidate_urls:
+            api_raw = infer_data_api(
+                candidate_urls=json.dumps(api_candidate_urls[:3], ensure_ascii=False),
+                max_candidates=3,
+                respect_robots=respect_robots,
+                allow_private=allow_private,
+            )
+            api_model_payload = _loads_tool_result(api_raw)
+            api_model = api_model_payload.get("api_model") or api_model_payload.get("data", {}).get("api_model") or {}
+            if api_model:
+                model["api_model"] = api_model
+                model["evidence"]["api_model"] = {
+                    "candidate_count": api_model_payload.get("diagnostics", {}).get("candidate_count", 0),
+                    "error_count": api_model_payload.get("diagnostics", {}).get("error_count", 0),
+                }
+                if api_model.get("confidence", 0) >= 0.65 and api_model.get("item_array"):
+                    model["best_data_source"] = {
+                        "type": "api_model",
+                        "url": api_model.get("source_url", ""),
+                        "method": "GET",
+                        "confidence": api_model.get("confidence", 0),
+                        "item_array_path": (api_model.get("item_array") or {}).get("path", ""),
+                        "field_paths": api_model.get("field_paths", {}),
+                        "reason": "Validated JSON API model has enough structure for crawler implementation.",
+                    }
+                    crawler_plan = model.get("crawler_plan") or {}
+                    crawler_plan["data_source"] = "api"
+                    crawler_plan["api"] = {
+                        "url": api_model.get("source_url", ""),
+                        "item_array_path": (api_model.get("item_array") or {}).get("path", ""),
+                        "field_paths": api_model.get("field_paths", {}),
+                        "pagination": api_model.get("pagination", {}),
+                    }
+                    model["crawler_plan"] = crawler_plan
+                    if "implement_api_crawler" not in model.get("next_actions", []):
+                        model.setdefault("next_actions", []).insert(0, "implement_api_crawler")
+        ok = bool(analysis.get("ok", analysis.get("success", False))) and model["access"]["access_class"] != "unknown"
+        recommendations = [
+            {
+                "type": "use_site_model",
+                "reason": "Use this compact model as the crawler implementation blueprint.",
+                "confidence": model["access"].get("confidence", 0.5),
+            }
+        ]
+        if "validate_api_candidate" in model.get("next_actions", []):
+            recommendations.append({
+                "type": "api_validation_next",
+                "reason": "The model found an API/network candidate; validate response shape before DOM scraping.",
+            })
+        if model.get("api_model"):
+            recommendations.append(_api_model_recommendation(model["api_model"]))
+        if model["access"]["access_class"] == "blocked_or_challenged":
+            recommendations.append({
+                "type": "respect_access_boundary",
+                "reason": "The target appears blocked or challenged. Use authorized APIs/cookies or stop.",
+            })
+        return _success_result(_v5_envelope(
+            ok,
+            data={"site_model": model},
+            diagnostics={
+                "analysis_ok": analysis.get("ok", analysis.get("success", False)),
+                "analysis_steps": model.get("evidence", {}).get("steps", []),
+                "interaction_ok": interaction_payload.get("ok") if interaction_payload else None,
+                "api_model_ok": api_model_payload.get("ok") if api_model_payload else None,
+            },
+            recommendations=recommendations,
+            site_model=model,
+        ))
+    except Exception as e:
+        return _error_result(str(e), "site_model_build_failed")
 
 @mcp.tool()
 def detect_site_type(analysis_json: str = "", html: str = "", url: str = "",

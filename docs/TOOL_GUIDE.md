@@ -4,6 +4,26 @@ This guide describes the main Crawpapa-Fetch MCP tools from an operator perspect
 
 ## Access Strategy
 
+### `build_site_model`
+
+Builds a compact Agent-facing model from runtime evidence.
+
+Use it when the Agent needs a crawler implementation blueprint, not a long human report.
+
+It wraps the main analysis chain and returns:
+
+- `site_model.access`: access class, best mode, API/network hint counts
+- `site_model.best_data_source`: preferred DOM/API/network source
+- `site_model.data_sources`: ranked data source candidates
+- `site_model.interaction_map`: pagination, network pagination, and category navigation hints
+- `site_model.pagination`: recommended pagination strategy and sample URLs
+- `site_model.category_strategy`: menu candidates and category URLs
+- `site_model.detail_strategy`: list selector, detail fields, samples, and risks
+- `site_model.crawler_plan`: executable crawler-plan skeleton
+- `site_model.next_actions`: what the Agent should do next
+
+This is the preferred entry point for Agent coding workflows.
+
 ### `analyze_site_for_crawl`
 
 Runs the recommended pre-crawl workflow as one report:
@@ -84,6 +104,47 @@ Use it to find:
 - pagination parameters
 - list/detail requests
 - filter endpoints
+
+### `observe_interactions`
+
+Observes runtime interactions and returns action-level evidence.
+
+It safely performs:
+
+- initial page load
+- scroll actions
+- optional next/load-more click candidates
+
+It reports:
+
+- `actions`: each action, URL before/after, DOM delta, and new requests
+- `interaction_map`: compact action summaries for Agents
+- `network`: ranked request candidates across the run
+
+Use it when a site only reveals data after scroll, next-page clicks, or load-more interactions.
+
+It does not submit forms, bypass login, solve CAPTCHA, or force access controls.
+
+### `infer_data_api`
+
+Infers the shape of a public JSON API response.
+
+Use it after `observe_browser_network`, `observe_interactions`, or script API-hint discovery.
+
+Inputs can be:
+
+- `url`: one JSON endpoint to fetch and inspect
+- `candidate_urls`: newline, comma, JSON list, or candidate objects from network observation
+- `sample_json`: already captured JSON text
+
+It returns:
+
+- `api_model.item_array.path`: likely list array path, such as `items` or `data.products`
+- `api_model.field_paths`: likely `title`, `price`, `image`, `url`, `description`, and `id` paths inside each item
+- `api_model.pagination`: `page`, `limit`, `cursor`, `total`, `hasNext`, and similar response fields
+- `recommendations[0].action`: usually `implement_api_crawler`, `sample_more_api_responses`, or `manual_api_review`
+
+Use this when the Agent needs to turn runtime network evidence into concrete crawler code.
 
 ### `infer_pagination_strategy`
 
