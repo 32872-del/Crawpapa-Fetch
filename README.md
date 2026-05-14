@@ -16,8 +16,8 @@ Crawpapa-Fetch is not a CAPTCHA cracker, account bypass tool, or stealth abuse f
 
 ## Status
 
-- Current version: `5.4.2`
-- Test baseline: `111 passed, 1 skipped`
+- Current version: `5.4.3`
+- Test baseline: `123 passed, 1 skipped`
 - Primary MCP server: `unified_crawler_server.py`
 - Package name: `crawpapa-fetch`
 - CLI commands:
