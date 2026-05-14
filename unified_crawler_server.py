@@ -106,6 +106,13 @@ from crawler_core.visualization import (
     load_records as _load_visualization_records,
     validate_visualization_payload as _validate_visualization_payload,
 )
+from crawler_core.scrapling_adapter import (
+    default_scrapling_storage_path as _default_scrapling_storage_path,
+    fetch_with_scrapling as _fetch_with_scrapling,
+    find_similar_with_scrapling as _find_similar_with_scrapling,
+    get_scrapling_status as _get_scrapling_status,
+    parse_with_scrapling as _parse_with_scrapling,
+)
 
 try:
     from dotenv import load_dotenv
@@ -5158,6 +5165,200 @@ def fetch_best_page(url: str, modes: str = "curl_cffi,requests,browser",
         return _success_result(payload)
     except Exception as e:
         return _error_result(str(e), "fetch_best_failed", "检查 URL、modes 或访问策略")
+
+@mcp.tool()
+def scrapling_status() -> str:
+    """
+    查看内置 Scrapling 能力状态。
+
+    返回 vendored 源码、依赖、解析器、自适应选择器、静态/动态抓取等能力是否可用。
+    """
+    try:
+        status = _get_scrapling_status()
+        return _success_result(_v5_envelope(
+            True,
+            data=status,
+            diagnostics={
+                "integration": "vendored",
+                "package": "scrapling",
+                "source": str(PROJECT_ROOT / "scrapling"),
+            },
+            recommendations=[
+                {
+                    "action": "install_full_extras",
+                    "why": "dynamic/stealth/spider features need optional browser and fingerprint dependencies",
+                    "command": "pip install -e .[full]",
+                }
+            ],
+            **_v5_compat(status),
+        ))
+    except Exception as exc:
+        return _error_result(str(exc), "scrapling_status_failed")
+
+
+@mcp.tool()
+def scrapling_parse(html: str, selector: str, selector_type: str = "css",
+                    attr: str = "", url: str = "", adaptive: bool = False,
+                    auto_save: bool = False, identifier: str = "",
+                    storage_name: str = "adaptive_selectors.sqlite",
+                    percentage: int = 40, max_results: int = 50) -> str:
+    """
+    使用内置 Scrapling 解析 HTML，支持 CSS/XPath、属性提取和自适应选择器。
+    """
+    try:
+        storage_root = DB_DIR / "scrapling"
+        storage_file = _default_scrapling_storage_path(storage_root, storage_name)
+        result = _parse_with_scrapling(
+            html=html,
+            selector=selector,
+            selector_type=selector_type,
+            attr=attr,
+            url=url,
+            adaptive=adaptive,
+            auto_save=auto_save,
+            identifier=identifier,
+            storage_file=storage_file,
+            percentage=percentage,
+            max_results=max_results,
+        )
+        return _success_result(_v5_envelope(
+            True,
+            data=result,
+            diagnostics={
+                "engine": "scrapling",
+                "count": result.get("count", 0),
+                "adaptive_enabled": adaptive,
+                "auto_save": auto_save,
+                "storage_file": storage_file if adaptive else "",
+            },
+            recommendations=[] if result.get("count") else [
+                {
+                    "action": "try_adaptive_or_similar",
+                    "why": "selector returned 0; use auto_save on an old page or scrapling_find_similar from a seed element",
+                }
+            ],
+            **_v5_compat(result),
+        ))
+    except Exception as exc:
+        return _error_result(str(exc), "scrapling_parse_failed",
+                             "检查 selector_type 是否为 css/xpath，或运行 scrapling_status 查看依赖")
+
+
+@mcp.tool()
+def scrapling_find_similar(html: str, seed_selector: str,
+                           selector_type: str = "css", url: str = "",
+                           similarity_threshold: float = 0.2,
+                           match_text: bool = False,
+                           max_results: int = 50) -> str:
+    """
+    使用 Scrapling 从一个种子元素推断同结构兄弟元素。
+    """
+    try:
+        result = _find_similar_with_scrapling(
+            html=html,
+            seed_selector=seed_selector,
+            selector_type=selector_type,
+            url=url,
+            similarity_threshold=similarity_threshold,
+            match_text=match_text,
+            max_results=max_results,
+        )
+        return _success_result(_v5_envelope(
+            bool(result.get("ok", False)),
+            data=result,
+            diagnostics={
+                "engine": "scrapling",
+                "seed_selector": seed_selector,
+                "returned": result.get("returned", 0),
+                "similarity_threshold": similarity_threshold,
+            },
+            recommendations=[] if result.get("ok") else [
+                {
+                    "action": "adjust_seed_selector",
+                    "why": result.get("message", "seed selector did not produce a reusable element"),
+                }
+            ],
+            **_v5_compat(result),
+        ))
+    except Exception as exc:
+        return _error_result(str(exc), "scrapling_find_similar_failed",
+                             "先用 scrapling_parse 确认 seed_selector 可以命中元素")
+
+
+@mcp.tool()
+def scrapling_fetch(url: str, mode: str = "static", method: str = "GET",
+                    headers: str = "{}", body: str = "", timeout: int = 30000,
+                    wait: int = 0, wait_selector: str = "",
+                    network_idle: bool = False, disable_resources: bool = False,
+                    headless: bool = True, use_proxy: bool = False,
+                    respect_robots: bool = RESPECT_ROBOTS, rate_limit: float = 0.0,
+                    allow_private: bool = False) -> str:
+    """
+    使用内置 Scrapling 抓取页面。
+    """
+    try:
+        _apply_request_policy(url, respect_robots=respect_robots, rate_limit=rate_limit or None,
+                              allow_private=allow_private)
+        parsed_headers, _ = _get_headers(headers)
+        proxy = ""
+        if use_proxy:
+            proxy_obj = _proxy_pool.get_proxy()
+            if isinstance(proxy_obj, dict):
+                proxy = proxy_obj.get("https") or proxy_obj.get("http") or ""
+        result = _fetch_with_scrapling(
+            url=url,
+            mode=mode,
+            method=method,
+            headers=parsed_headers,
+            body=body,
+            timeout=timeout,
+            wait=wait,
+            wait_selector=wait_selector,
+            network_idle=network_idle,
+            disable_resources=disable_resources,
+            headless=headless,
+            proxy=proxy,
+        )
+        _append_event({
+            "event": "fetch",
+            "tool": "scrapling_fetch",
+            "url": url,
+            "mode": mode,
+            "status": result.get("status", 0),
+            "ok": True,
+            "bytes": result.get("html_bytes", 0),
+        })
+        return _success_result(_v5_envelope(
+            True,
+            data=result,
+            diagnostics={
+                "engine": "scrapling",
+                "mode": mode,
+                "method": method.upper(),
+                "used_proxy": bool(proxy),
+                "html_bytes": result.get("html_bytes", 0),
+            },
+            recommendations=[
+                {
+                    "action": "parse_with_scrapling",
+                    "why": "use scrapling_parse or scrapling_find_similar on returned html for resilient selectors",
+                }
+            ],
+            **_v5_compat({k: v for k, v in result.items() if k != "html"}),
+        ))
+    except Exception as exc:
+        _append_event({
+            "event": "fetch",
+            "tool": "scrapling_fetch",
+            "url": url,
+            "mode": mode,
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+        })
+        return _error_result(str(exc), "scrapling_fetch_failed",
+                             "运行 scrapling_status 查看依赖；动态模式需要浏览器依赖")
+
 
 @mcp.tool()
 def fetch_post(url: str, data: str = "{}", content_type: str = "application/json",

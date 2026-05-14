@@ -234,6 +234,23 @@ The top-level `diff_summary` compares the recommended source with the other matc
 
 The recommendation favors sources with strong business-directory signals, usable URLs, useful depth, and low hidden/content/external noise.
 
+### Scrapling-powered tools
+
+`scrapling_status`, `scrapling_parse`, `scrapling_find_similar`, and `scrapling_fetch` are vendored from Scrapling 0.4.8 and live inside this repo.
+
+Use them when you need:
+
+- CSS/XPath parsing with adaptive selector relocation
+- seed-element expansion into structurally similar cards
+- static fetches that preserve Scrapling's parser metadata
+- a quick check on optional parser/browser dependencies
+
+Notes:
+
+- These tools are analysis-oriented.
+- They do not expose CAPTCHA solving or login bypass.
+- `scrapling_fetch` supports static and dynamic page retrieval, but dynamic mode depends on browser-related extras.
+
 ## Detail Sampling
 
 ### `analyze_detail_samples`

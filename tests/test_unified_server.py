@@ -321,6 +321,61 @@ def test_parse_sitemap_uses_iterative_depth_limit():
         assert expanded[0]["url"] == f"{site}/p/1"
 
 
+def test_scrapling_status_reports_vendored_package():
+    status = json.loads(server.scrapling_status())
+
+    assert status["ok"] is True
+    assert status["data"]["vendored"] is True
+    assert status["data"]["version"] == "0.4.8"
+    assert status["data"]["notice_file"] == "THIRD_PARTY_NOTICES.md"
+    assert status["diagnostics"]["integration"] == "vendored"
+
+
+def test_scrapling_parse_css_and_find_similar():
+    html = """<!doctype html><html><body>
+      <article class="product-card" id="a1"><h3>Alpha</h3><span class="price">$10</span></article>
+      <article class="product-card" id="b2"><h3>Beta</h3><span class="price">$12</span></article>
+      <article class="product-card" id="c3"><h3>Gamma</h3><span class="price">$14</span></article>
+    </body></html>"""
+
+    parsed = json.loads(server.scrapling_parse(
+        html,
+        selector=".product-card h3",
+        selector_type="css",
+        url="https://example.test/catalog",
+    ))
+    similar = json.loads(server.scrapling_find_similar(
+        html,
+        seed_selector="#a1",
+        selector_type="css",
+        url="https://example.test/catalog",
+        similarity_threshold=0.1,
+    ))
+
+    assert parsed["ok"] is True
+    assert parsed["data"]["count"] == 3
+    assert parsed["data"]["values"][0] == "Alpha"
+    assert parsed["data"]["records"][0]["tag"] == "h3"
+    assert similar["ok"] is True
+    assert similar["data"]["count"] >= 2
+    assert any(item["tag"] == "article" for item in similar["data"]["records"])
+
+
+def test_scrapling_fetch_static_uses_local_html():
+    with _local_site() as site:
+        result = json.loads(server.scrapling_fetch(
+            f"{site}/products",
+            mode="static",
+            respect_robots=False,
+            allow_private=True,
+        ))
+
+    assert result["ok"] is True
+    assert result["data"]["status"] == 200
+    assert "Local Product" in result["data"]["html"]
+    assert result["diagnostics"]["engine"] == "scrapling"
+
+
 def test_recent_events_tail_reader_does_not_scan_full_file():
     server.EVENT_LOG_FILE.write_text(
         "\n".join(

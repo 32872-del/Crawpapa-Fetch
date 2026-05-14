@@ -9,6 +9,7 @@ Crawpapa-Fetch/
   unified_crawler_server.py      # Current MCP server entry and tool registry
   main.py                        # Console entry wrapper
   crawler_core/                  # Reusable crawler engine modules
+  scrapling/                     # Vendored Scrapling 0.4.8 source
   agents/                        # Agent orchestration experiments/integration code
   config/                        # Configuration helpers and defaults
   utils/                         # Small shared utilities
@@ -39,6 +40,11 @@ Crawpapa-Fetch/
   - Put reusable business logic here when it is part of the MCP product.
   - Keep downstream handoff contracts here too, such as `visualization.py`, so MCP tools remain thin adapters.
   - Keep persistent analysis memory here too, such as `target_memory.py`, when the capability is shared by multiple MCP tools.
+
+- `scrapling/`
+  - Vendored third-party parsing and fetch stack from Scrapling 0.4.8.
+  - Treat this as internal source code with a preserved BSD-3-Clause notice.
+  - Keep MCP-facing wrappers thin and expose them through `unified_crawler_server.py` or a dedicated adapter module.
 
 - `agents/`
   - Agent-side orchestration and integration experiments.

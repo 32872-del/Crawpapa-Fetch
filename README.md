@@ -54,6 +54,15 @@ For pre-crawl analysis, you usually stop at `validate_collection_plan` or `expor
 
 For ecommerce targets, check public sitemap and detail-page evidence early. If `infer_category_tree` finds strong product sitemap coverage and detail pages expose Product JSON-LD, Open Graph product meta, or platform variant config, prefer a sitemap-to-detail crawler over fragile list-page selectors.
 
+`scrapling_*` tools are vendored into this repo from Scrapling 0.4.8 and add parser-level resilience:
+
+- `scrapling_status` for dependency and feature checks
+- `scrapling_parse` for CSS/XPath parsing with adaptive selector storage
+- `scrapling_find_similar` for sibling-card discovery from one seed element
+- `scrapling_fetch` for static or browser-backed page retrieval
+
+They are analysis tools, not CAPTCHA-bypass or login-wall bypass features.
+
 ## Key MCP Tools
 
 Access and rendering:
@@ -77,6 +86,10 @@ Page understanding:
 - `infer_site_selectors`
 - `infer_site_spec_from_samples`
 - `extract_structured_data`
+- `scrapling_status`
+- `scrapling_parse`
+- `scrapling_find_similar`
+- `scrapling_fetch`
 
 Pagination and detail analysis:
 
@@ -204,6 +217,7 @@ The packaging flow runs a secret audit first:
 
 ```text
 crawler_core/                  reusable crawler engine modules
+scrapling/                     vendored Scrapling 0.4.8 source
 unified_crawler_server.py      MCP tool registration and server entry
 agents/                        optional agent orchestration integrations
 tools/                         operator scripts and maintenance tools
