@@ -236,7 +236,9 @@ The recommendation favors sources with strong business-directory signals, usable
 
 ### Scrapling-powered tools
 
-`scrapling_status`, `scrapling_parse`, `scrapling_find_similar`, and `scrapling_fetch` are vendored from Scrapling 0.4.8 and live inside this repo.
+`scrapling_status`, `scrapling_parse`, `scrapling_find_similar`, `scrapling_fetch`,
+`scrapling_spider_status`, and `scrapling_spider_run` are vendored from Scrapling 0.4.8
+and live inside this repo.
 
 Use them when you need:
 
@@ -244,12 +246,78 @@ Use them when you need:
 - seed-element expansion into structurally similar cards
 - static fetches that preserve Scrapling's parser metadata
 - a quick check on optional parser/browser dependencies
+- real site-level crawls with scheduler priority, URL deduplication, robots.txt checks, sitemap seeds, checkpoint directories, and follow rules
 
 Notes:
 
 - These tools are analysis-oriented.
 - They do not expose CAPTCHA solving or login bypass.
 - `scrapling_fetch` supports static and dynamic page retrieval, but dynamic mode depends on browser-related extras.
+- `scrapling_spider_run` defaults to static `FetcherSession`; it is intended to prove crawl strategy and extraction shape before a production crawler is written.
+
+### `scrapling_spider_run`
+
+Runs a JSON-defined Scrapling `CrawlSpider` or `SitemapSpider` without asking the operator
+to write a Python subclass.
+
+Minimal crawl spec:
+
+```json
+{
+  "name": "example_products",
+  "spider_type": "crawl",
+  "start_urls": ["https://example.com/category"],
+  "item_selector": "article.product-card",
+  "item_fields": {
+    "title": ".product-title",
+    "url": "a@href",
+    "price": ".price"
+  },
+  "follow_rules": [
+    {
+      "allow": ["/product/"],
+      "restrict_css": "article.product-card",
+      "callback": "parse_detail",
+      "priority": 10
+    }
+  ],
+  "max_depth": 1,
+  "max_items": 100,
+  "robots_txt_obey": true
+}
+```
+
+Minimal sitemap spec:
+
+```json
+{
+  "name": "example_sitemap_products",
+  "spider_type": "sitemap",
+  "sitemap_urls": ["https://example.com/sitemap-products.xml"],
+  "item_fields": {
+    "title": "h1",
+    "price": ".price",
+    "description": ".description"
+  },
+  "max_items": 100
+}
+```
+
+Field selectors can be strings such as `.price`, `a@href`, `img@src`, or objects:
+
+```json
+{
+  "image_urls": {"selector": ".gallery img@src", "many": true},
+  "title": {"selector": "h1", "required": true}
+}
+```
+
+The response includes:
+
+- extracted `items`
+- `stats` from Scrapling's engine, including request count, offsite count, robots disallow count, cache hits/misses, status counts, and bytes
+- `spec_summary` showing which sources, fields, rules, depth, and checkpoint settings were used
+- optional JSON artifact and optional SQLite save result
 
 ## Detail Sampling
 

@@ -376,6 +376,92 @@ def test_scrapling_fetch_static_uses_local_html():
     assert result["diagnostics"]["engine"] == "scrapling"
 
 
+def test_scrapling_spider_status_reports_framework():
+    status = json.loads(server.scrapling_spider_status())
+
+    assert status["ok"] is True
+    assert status["data"]["spider_importable"] is True
+    assert status["data"]["features"]["crawl_spider"] is True
+    assert status["data"]["features"]["scheduler_priority_dedup"] is True
+
+
+def test_scrapling_spider_run_crawl_follows_detail_pages():
+    with _local_site() as site:
+        spec = {
+            "name": "local_detail_spider",
+            "spider_type": "crawl",
+            "start_urls": [f"{site}/products"],
+            "allowed_domains": ["127.0.0.1"],
+            "item_fields": {
+                "title": {"selector": "h1.title", "required": True},
+                "price": ".price",
+                "description": ".product-description",
+                "image_url": "img.product-image-photo@src",
+            },
+            "follow_rules": [
+                {
+                    "allow": [r"/p/\d+"],
+                    "restrict_css": "article.product-card",
+                    "callback": "parse_detail",
+                    "priority": 10,
+                }
+            ],
+            "max_depth": 1,
+            "max_items": 10,
+            "robots_txt_obey": False,
+        }
+        result = json.loads(server.scrapling_spider_run(json.dumps(spec), allow_private=True))
+
+    assert result["ok"] is True
+    payload = result["data"]["result"]
+    assert payload["spider_type"] == "crawl"
+    assert payload["item_count"] >= 2
+    assert payload["stats"]["requests_count"] >= 3
+    assert any(item["title"] == "Local Product" for item in payload["items"])
+    assert all(item["image_url"].startswith(site) for item in payload["items"])
+
+
+def test_scrapling_spider_run_sitemap_extracts_products():
+    with _local_site() as site:
+        spec = {
+            "name": "local_sitemap_spider",
+            "spider_type": "sitemap",
+            "sitemap_urls": [f"{site}/sitemap-product.xml"],
+            "allowed_domains": ["127.0.0.1"],
+            "item_fields": {
+                "title": "h1.title",
+                "price": ".price",
+            },
+            "max_items": 10,
+        }
+        result = json.loads(server.scrapling_spider_run(json.dumps(spec), allow_private=True))
+
+    assert result["ok"] is True
+    payload = result["data"]["result"]
+    assert payload["spider_type"] == "sitemap"
+    assert payload["item_count"] == 2
+    assert payload["stats"]["requests_count"] >= 3
+
+
+def test_scrapling_spider_run_obeys_robots_txt():
+    with _local_site() as site:
+        spec = {
+            "name": "local_robots_spider",
+            "spider_type": "crawl",
+            "start_urls": [f"{site}/blocked"],
+            "allowed_domains": ["127.0.0.1"],
+            "item_fields": {"title": "h1"},
+            "robots_txt_obey": True,
+            "max_items": 10,
+        }
+        result = json.loads(server.scrapling_spider_run(json.dumps(spec), allow_private=True))
+
+    assert result["ok"] is True
+    payload = result["data"]["result"]
+    assert payload["item_count"] == 0
+    assert payload["stats"]["robots_disallowed_count"] >= 1
+
+
 def test_recent_events_tail_reader_does_not_scan_full_file():
     server.EVENT_LOG_FILE.write_text(
         "\n".join(

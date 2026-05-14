@@ -40,11 +40,12 @@ Crawpapa-Fetch/
   - Put reusable business logic here when it is part of the MCP product.
   - Keep downstream handoff contracts here too, such as `visualization.py`, so MCP tools remain thin adapters.
   - Keep persistent analysis memory here too, such as `target_memory.py`, when the capability is shared by multiple MCP tools.
+  - `scrapling_adapter.py` and `scrapling_spider_adapter.py` bridge vendored Scrapling parser and spider capabilities into MCP tools.
 
 - `scrapling/`
   - Vendored third-party parsing and fetch stack from Scrapling 0.4.8.
   - Treat this as internal source code with a preserved BSD-3-Clause notice.
-  - Keep MCP-facing wrappers thin and expose them through `unified_crawler_server.py` or a dedicated adapter module.
+  - Keep MCP-facing wrappers thin and expose them through `unified_crawler_server.py` or dedicated adapter modules.
 
 - `agents/`
   - Agent-side orchestration and integration experiments.
@@ -112,4 +113,13 @@ Keep refactors staged:
 3. Add tests before moving runtime logic.
 4. Extract one MCP capability at a time from `unified_crawler_server.py` into `crawler_core/`.
 5. Verify with `python -m pytest -q` after each stage.
+
+## Current Spider Layer
+
+- `crawler_core/scrapling_spider_adapter.py`
+  - JSON-driven runner for vendored Scrapling `CrawlSpider` and `SitemapSpider`.
+  - Converts a site spec into a crawl strategy, follow rules, and field extraction.
+  - Keeps high-risk behavior out of the MCP surface: no CAPTCHA solving, no login bypass, no private-target access by default.
+
+See `docs/architecture/SCRAPLING_SPIDER_RUNNER.md` for the runner logic diagram.
 

@@ -60,6 +60,8 @@ For ecommerce targets, check public sitemap and detail-page evidence early. If `
 - `scrapling_parse` for CSS/XPath parsing with adaptive selector storage
 - `scrapling_find_similar` for sibling-card discovery from one seed element
 - `scrapling_fetch` for static or browser-backed page retrieval
+- `scrapling_spider_status` for spider framework, scheduler, robots, sitemap, checkpoint, and cache checks
+- `scrapling_spider_run` for JSON-driven CrawlSpider/SitemapSpider runs with follow rules and structured field extraction
 
 They are analysis tools, not CAPTCHA-bypass or login-wall bypass features.
 
@@ -90,11 +92,14 @@ Page understanding:
 - `scrapling_parse`
 - `scrapling_find_similar`
 - `scrapling_fetch`
+- `scrapling_spider_status`
+- `scrapling_spider_run`
 
 Pagination and detail analysis:
 
 - `infer_pagination_strategy`
 - `analyze_detail_samples`
+- `scrapling_spider_run`
 - `crawl_list`
 - `crawl_product`
 

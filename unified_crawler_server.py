@@ -113,6 +113,10 @@ from crawler_core.scrapling_adapter import (
     get_scrapling_status as _get_scrapling_status,
     parse_with_scrapling as _parse_with_scrapling,
 )
+from crawler_core.scrapling_spider_adapter import (
+    get_scrapling_spider_status as _get_scrapling_spider_status,
+    run_scrapling_spider as _run_scrapling_spider,
+)
 
 try:
     from dotenv import load_dotenv
@@ -5358,6 +5362,123 @@ def scrapling_fetch(url: str, mode: str = "static", method: str = "GET",
         })
         return _error_result(str(exc), "scrapling_fetch_failed",
                              "运行 scrapling_status 查看依赖；动态模式需要浏览器依赖")
+
+
+@mcp.tool()
+def scrapling_spider_status() -> str:
+    """
+    查看内置 Scrapling Spider 能力状态。
+
+    返回 Spider/CrawlSpider/SitemapSpider、调度器、去重、robots、checkpoint
+    等站点级采集能力是否可用。
+    """
+    try:
+        status = _get_scrapling_spider_status()
+        return _success_result(_v5_envelope(
+            bool(status.get("spider_importable")),
+            data=status,
+            diagnostics={
+                "integration": "vendored",
+                "package": "scrapling.spiders",
+                "source": str(PROJECT_ROOT / "scrapling" / "spiders"),
+            },
+            recommendations=[
+                {
+                    "action": "use_scrapling_spider_run",
+                    "why": "run a JSON-defined crawl with queue, dedup, priority, robots, sitemap and checkpoint support",
+                }
+            ],
+            **_v5_compat(status),
+        ))
+    except Exception as exc:
+        return _error_result(str(exc), "scrapling_spider_status_failed")
+
+
+@mcp.tool()
+def scrapling_spider_run(spec_json: str, output_name: str = "",
+                         save_to_db_flag: bool = False,
+                         db_name: str = "scrapling_spider",
+                         table: str = "items",
+                         allow_private: bool = False) -> str:
+    """
+    使用 JSON spec 运行内置 Scrapling Spider。
+
+    支持 crawl/sitemap 两种站点级入口，并继承 Scrapling 的 scheduler、去重、
+    优先级、robots.txt、checkpoint、response cache、follow rules 等能力。
+    """
+    try:
+        spec = json.loads(spec_json)
+        if not isinstance(spec, dict):
+            return _error_result("spec_json must be a JSON object", "invalid_input")
+        spec["allow_private"] = bool(allow_private or spec.get("allow_private"))
+        if spec.get("use_checkpoint") and not spec.get("crawldir") and not spec.get("checkpoint_dir"):
+            spider_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(spec.get("name") or "scrapling_spider")).strip("._")
+            spec["crawldir"] = str(DB_DIR / "scrapling_checkpoints" / (spider_name or "scrapling_spider"))
+
+        result = _run_scrapling_spider(spec)
+        artifact_path = ""
+        if output_name:
+            safe_name = os.path.basename(output_name)
+            if not safe_name.lower().endswith(".json"):
+                safe_name += ".json"
+            artifact = OUTPUT_DIR / safe_name
+            artifact.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            artifact_path = str(artifact)
+
+        db_result: Any = None
+        if save_to_db_flag:
+            db_result = json.loads(save_batch_to_db(
+                json.dumps(result.get("items", []), ensure_ascii=False),
+                db_name=db_name,
+                table=table,
+                atomic=False,
+            ))
+
+        _append_event({
+            "event": "scrapling_spider",
+            "tool": "scrapling_spider_run",
+            "ok": True,
+            "spider_type": result.get("spider_type"),
+            "item_count": result.get("item_count", 0),
+            "requests_count": (result.get("stats") or {}).get("requests_count", 0),
+            "robots_disallowed_count": (result.get("stats") or {}).get("robots_disallowed_count", 0),
+        })
+        diagnostics = {
+            "engine": "scrapling_spider",
+            "spider_type": result.get("spider_type"),
+            "item_count": result.get("item_count", 0),
+            "stats": result.get("stats", {}),
+            "artifact_path": artifact_path,
+            "db_result": db_result,
+        }
+        recommendations = []
+        if not result.get("item_count"):
+            recommendations.append({
+                "action": "inspect_selectors_or_rules",
+                "why": "crawl completed without items; check item_selector/item_fields, follow_rules, robots_txt, and allowed_domains",
+            })
+        if (result.get("stats") or {}).get("robots_disallowed_count"):
+            recommendations.append({
+                "action": "respect_robots_or_change_scope",
+                "why": "some requests were blocked by robots.txt policy",
+            })
+        return _success_result(_v5_envelope(
+            True,
+            data={"result": result, "artifact_path": artifact_path, "db_result": db_result},
+            diagnostics=diagnostics,
+            recommendations=recommendations,
+            **_v5_compat(result),
+        ))
+    except Exception as exc:
+        _append_event({
+            "event": "scrapling_spider",
+            "tool": "scrapling_spider_run",
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc)[:500],
+        })
+        return _error_result(str(exc), "scrapling_spider_run_failed",
+                             "检查 spec_json、allowed_domains、follow_rules 和 Scrapling spider 依赖")
 
 
 @mcp.tool()
